@@ -1,0 +1,22 @@
+digraph G {
+rankdir=TB; nodesep=0.35; ranksep=0.35;
+node [shape=box, style="rounded,filled", fillcolor="#dce8f7", color="#2a78d6", fontname="Arial", fontsize=11];
+edge [color="#52514e", fontname="Arial", fontsize=10];
+m [label="30 лічильників\nModbus RTU, імпульсні входи"];
+g [label="Шлюз: опитування кожні 15 хв"];
+c [label="Зв'язок є?", shape=diamond, fillcolor="#fff4d6", color="#eda100"];
+b [label="Буфер до 72 год\nстатус missing до дозавантаження", fillcolor="#fbe1d6", color="#eb6834"];
+q [label="MQTT 5, QoS 1\nконтроль якості показів"];
+s [label="Інтервальне споживання\nрізниця накопичувальних показів"];
+a [label="Порівняння з базовою лінією\n4 інтервали > база + max(3σ; 10%)"];
+n [label="Сповіщення з оцінкою\nкВт·год і EUR на добу"];
+i [label="Інцидент: технік, причина, закриття"];
+r [label="Підтвердження повернення до бази\nзбережений обсяг і місячний звіт"];
+m -> g -> c;
+c -> q [label="так"];
+c -> b [label="ні"];
+b -> q [label="після відновлення", style=dashed];
+q -> s -> a;
+a -> n [label="аномалія"];
+n -> i -> r;
+}
