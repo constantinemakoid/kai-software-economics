@@ -309,7 +309,7 @@ def sheet_forecast(wb):
     ch.width = 18
     ch.legend.position = "b"
     ws.add_chart(ch, f"H{s0 + 1}")
-    col_widths(ws, [5, 13, 10, 6, 9, 10, 9, 10, 9, 9, 12, 9, 11, 11, 11, 12, 10, 10, 2, 10, 11])
+    col_widths(ws, [5, 13, 10, 6, 9, 10, 9, 10, 9, 9, 12, 9, 11, 11, 11, 14, 12.5, 12.5, 2, 10, 11])
     k.page(ws)
 
 
@@ -323,7 +323,7 @@ SENS = [
         ("Місяць operating BE", lambda c, kk: month_formula("x5_be_o", f"{c}{{r0}}"), "0"),
     ]),
     ("price", "Ціна", [
-        ("ARPA, EUR", lambda c, kk: f"=(x5_rev_bu*{kk}+x5_over)/x5_clients", "#,##0.00"),
+        ("ARPA, EUR", lambda c, kk: f"=(x5_rev_bu+x5_over)*{kk}/x5_clients", "#,##0.00"),
         ("Gross margin", lambda c, kk: f"=({c}{{r0}}-x5_cogs_pa)/{c}{{r0}}", "0.00%"),
         ("CM на акаунт, EUR", lambda c, kk: f"={c}{{r0}}*(1-x5_ovshare)-x5_cogs_pa", "#,##0.00"),
         ("Просте LTV, EUR", lambda c, kk: f"={c}{{r0}}*{c}{{r1}}/x5_churn", "#,##0.00"),
@@ -373,7 +373,7 @@ def sheet_sens(wb):
     k.style_table(ws, 1, 1, r - 1, 5)
     for key, _, _ in SENS:
         ws.cell(LAYOUT["sens_" + key], 1).font = Font(name="Arial", size=10, bold=True)
-    ws.cell(r + 1, 1, "Припущення для ціни: COGS на акаунт 34,83 EUR і overage 467,5 EUR незмінні; змінюються базовий платіж і ціна будівлі; інші змінні витрати 6% від нової ARPA.")
+    ws.cell(r + 1, 1, "Припущення для ціни: змінюються всі ціни прайсу (базовий платіж, ціна будівлі, ставка overage 55 EUR); COGS на акаунт 34,83 EUR незмінний; інші змінні витрати 6% від нової ARPA.")
     ws.cell(r + 2, 1, "Припущення для CAC: 7 нових клієнтів сталі, тому CAC змінюється разом з acquisition spend.")
     col_widths(ws, [34, 14, 14, 14, 22])
     k.page(ws, landscape=False)

@@ -1282,7 +1282,7 @@ def avg_usage(tiers=TIERS):
     return sum(t.mix * t.usage for t in tiers)
 
 
-def scenario(k, p4=P4, tiers=TIERS, price_mult=1.0):
+def scenario(k, p4=P4, tiers=TIERS, price_mult=1.0, over_mult=1.0):
     buildings = p4["scale_y3"] * k
     clients = buildings / avg_usage(tiers)
     rows = {}
@@ -1295,7 +1295,7 @@ def scenario(k, p4=P4, tiers=TIERS, price_mult=1.0):
         usage_rev += b * t.per_building * price_mult
         client_c += c * t.client_cogs
     high = buildings * p4["high_share"]
-    over_rev = high * overage_high(p4)
+    over_rev = high * overage_high(p4) * over_mult
     building_c = (buildings - high) * cogs_building() + high * cogs_building(True, p4)
     rev = base_rev + usage_rev + over_rev
     cogs = client_c + building_c
@@ -1435,7 +1435,7 @@ def funnel(p5=P5):
 
 
 def base_month_y3(price_mult=1.0):
-    return scenario(1.0, price_mult=price_mult)
+    return scenario(1.0, price_mult=price_mult, over_mult=price_mult)
 
 
 def unit_economics(p5=P5, price_mult=1.0):
