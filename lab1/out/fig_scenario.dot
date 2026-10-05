@@ -1,22 +1,28 @@
 digraph G {
-rankdir=TB; nodesep=0.35; ranksep=0.35;
-node [shape=box, style="rounded,filled", fillcolor="#dce8f7", color="#2a78d6", fontname="Arial", fontsize=11];
+rankdir=LR; nodesep=0.3; ranksep=0.35; newrank=true;
+node [shape=box, style="rounded,filled", fillcolor="#dce8f7", color="#2a78d6", fontname="Arial", fontsize=11, width=2.3, height=0.8];
 edge [color="#52514e", fontname="Arial", fontsize=10];
-m [label="30 лічильників\nModbus RTU, імпульсні входи"];
-g [label="Шлюз: опитування кожні 15 хв"];
-c [label="Зв'язок є?", shape=diamond, fillcolor="#fff4d6", color="#eda100"];
-b [label="Буфер до 72 год\nстатус missing до дозавантаження", fillcolor="#fbe1d6", color="#eb6834"];
-q [label="MQTT 5, QoS 1\nконтроль якості показів"];
-s [label="Інтервальне споживання\nрізниця накопичувальних показів"];
-a [label="Порівняння з базовою лінією\n4 інтервали > база + max(3σ; 10%)"];
-n [label="Сповіщення з оцінкою\nкВт·год і EUR на добу"];
-i [label="Інцидент: технік, причина, закриття"];
-r [label="Підтвердження повернення до бази\nзбережений обсяг і місячний звіт"];
+m [label="30 лічильників\nModbus RTU,\nімпульсні входи"];
+g [label="Шлюз:\nопитування\nкожні 15 хв"];
+c [label="Зв'язок\nє?", shape=diamond, fillcolor="#fff4d6", color="#eda100", width=1.2];
+b [label="Буфер до 72 год,\nстатус missing до\nдозавантаження", fillcolor="#fbe1d6", color="#eb6834"];
+q [label="MQTT 5, QoS 1,\nконтроль якості\nпоказів"];
+s [label="Інтервальне\nспоживання: різниця\nнакопичувальних показів"];
+a [label="Порівняння з базою:\n4 інтервали > база + max(3σ; 10%)"];
+n [label="Сповіщення\nз оцінкою кВт·год\nі EUR на добу"];
+i [label="Інцидент:\nтехнік, причина,\nзакриття"];
+r [label="Повернення до бази,\nзбережений обсяг,\nмісячний звіт"];
+{rank=same; m; r;}
+{rank=same; g; i;}
+{rank=same; c; b; n;}
+{rank=same; q; a;}
 m -> g -> c;
 c -> q [label="так"];
 c -> b [label="ні"];
-b -> q [label="після відновлення", style=dashed];
-q -> s -> a;
-a -> n [label="аномалія"];
-n -> i -> r;
+b -> q [label="після\nвідновлення", style=dashed];
+q -> s;
+a -> s [dir=back];
+n -> a [dir=back, label="аномалія"];
+i -> n [dir=back];
+r -> i [dir=back];
 }

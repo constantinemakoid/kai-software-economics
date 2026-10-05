@@ -126,11 +126,12 @@ def sheet_segments(wb):
 
 def sheet_stakeholders(wb):
     ws = wb.create_sheet("Стейкхолдери")
-    ws.append(["Стейкхолдер", "Роль", "Інтерес і цінність", "Вплив 1...5", "Зацікавленість 1...5", "Пріоритет залучення", "Конфлікт, ризик", "Залучення"])
+    ws.append(["Стейкхолдер", "Роль", "Інтерес і цінність", "Вплив 1...5", "Зацікавленість 1...5", "Пріоритет залучення", "Квадрант", "Конфлікт, ризик", "Залучення"])
     for i, s in enumerate(m.STAKEHOLDERS, start=2):
-        ws.append([s.name, s.role, s.interest, s.influence, s.interest_level, f"=D{i}*E{i}", s.conflict, s.engagement])
-    style_table(ws, 1, 1, len(m.STAKEHOLDERS) + 1, 8)
-    widths(ws, [22, 22, 32, 9, 13, 11, 32, 30])
+        quad = f'=IF(AND(D{i}>=4,E{i}>=4),"керувати тісно",IF(D{i}>=4,"задовольняти",IF(E{i}>=4,"інформувати","спостерігати")))'
+        ws.append([s.name, s.role, s.interest, s.influence, s.interest_level, f"=D{i}*E{i}", quad, s.conflict, s.engagement])
+    style_table(ws, 1, 1, len(m.STAKEHOLDERS) + 1, 9)
+    widths(ws, [22, 22, 32, 9, 16, 11, 15, 32, 30])
     page(ws)
 
 
@@ -219,8 +220,8 @@ def passport_rows():
         ("Первинний сегмент", "S1: багатоорендні офісні центри класу B/B+ площею 8...25 тис. м² з енергоменеджером або головним інженером і субобліком орендарів"),
         ("Користувач, покупець, платник", "Користувачі: енергоменеджер, технік; вторинний: орендар. Покупець: власник (asset manager) або керуюча компанія. Платник: власник з операційного бюджету, частково відшкодовується орендарями через сервісний платіж"),
         ("Поточна альтернатива", "Місячні рахунки і ручне зняття показів у Excel, обходи техніка, погодинні дані комерційного обліку лише по вводу з затримкою, BMS без аналітики"),
-        ("Ціннісна пропозиція", "Виявлення аномалії протягом 2 год замість 12 діб і встановлення її причини до рахунку; оцінена цінність " + f"{vm['total_eur_year']:,.0f}".replace(",", " ") + " EUR на будівлю за рік (П)"),
-        ("Ключова метрика", "Медіана часу від початку аномалії до її фіксації: база 288 год (П), ціль не більше 2 год для 80% аномалій за 3 міс."),
+        ("Ціннісна пропозиція", "Медіанний час виявлення аномалії не більше 2 год замість 12 діб і встановлення її причини до рахунку; оцінена цінність " + f"{vm['total_eur_year']:,.0f}".replace(",", " ") + " EUR на будівлю за рік (П)"),
+        ("Ключова метрика", "Медіана часу від початку аномалії до її фіксації: база 288 год (П), ціль: медіана не більше 2 год за 3 міс. пілоту; додатковий контроль хвоста розподілу: P80 не більше 4 год"),
         ("Межі MVP", "Одна будівля, лише електроенергія, 30 точок обліку, 11 функцій і 5 NFR; без керування обладнанням, білінгу, мобільного застосунку, погодної моделі"),
         ("Головне припущення", "A1: аномалії, які усуваються після рахунку, становлять не менше 2% річного споживання будівлі (вплив 5, невизначеність 4)"),
         ("Критерій переходу далі", "A1, A2 і A5 підтверджено тестами: перевитрата не менше 2% у 2 з 3 будівель, не менше 3 листів про намір за ціною 130 EUR, дозавантаження не менше 99,5% інтервалів"),
@@ -268,31 +269,85 @@ def verify(path):
         "Припущення!H2": (wb["Припущення"]["H2"].value, 1),
         "Витрати ЖЦ!B21": (wb["Витрати ЖЦ"]["B21"].value, len(m.LIFECYCLE)),
     }
+    quads = {wb["Стейкхолдери"].cell(r, 1).value: wb["Стейкхолдери"].cell(r, 7).value for r in range(2, len(m.STAKEHOLDERS) + 2)}
+    quads_ok = quads == {st.name: m.quadrant(st) for st in m.STAKEHOLDERS}
+    print("quadrants match:", quads_ok)
     ok = all(a is not None and abs(a - b) < 1e-6 for a, b in checks.values())
     for k, (a, b) in checks.items():
         print(f"{k}: LibreOffice={a} Python={b}")
     ranks = {wb["Припущення"].cell(r, 1).value: wb["Припущення"].cell(r, 8).value for r in range(2, 14)}
     expected = {a.aid: i for i, a in enumerate(m.ranked_assumptions(), start=1)}
-    ok = ok and ranks == expected
+    ok = ok and ranks == expected and quads_ok
     print("ranks match:", ranks == expected)
     shutil.copy(tmp / path.name, OUT / "lab1_recalculated.xlsx")
     shutil.rmtree(tmp, ignore_errors=True)
     return ok
 
 
+PRINT_VIEWS = {
+    "Параметри": ("params", ["F"]),
+    "Цінність": ("value", []),
+    "Сегменти": ("segments", ["B"]),
+    "Змінні витрати": ("variable", []),
+    "Припущення": ("assumptions", ["B", "C"]),
+    "Стейкхолдери": ("stakeholders", ["B", "C", "H", "I"]),
+}
+
+FIXED_ROWS = {"params": 18, "assumptions": 18, "stakeholders": 34}
+
+
+def split_columns(ws):
+    from openpyxl.utils import get_column_letter
+    from openpyxl.worksheet.dimensions import ColumnDimension
+    for key, dim in list(ws.column_dimensions.items()):
+        if dim.min and dim.max and dim.max > dim.min:
+            for idx in range(dim.min, dim.max + 1):
+                letter = get_column_letter(idx)
+                ws.column_dimensions[letter] = ColumnDimension(ws, index=letter, width=dim.width, hidden=dim.hidden)
+
+
 def render_sheets(path):
     import pymupdf
-    tmp = Path(tempfile.mkdtemp())
-    soffice(path, "pdf", tmp)
-    doc = pymupdf.open(tmp / (path.stem + ".pdf"))
-    files = []
-    for i, pg in enumerate(doc, start=1):
-        pix = pg.get_pixmap(dpi=170)
-        out = OUT / f"sheet_page_{i:02d}.png"
-        pix.save(out)
-        crop(out)
-        files.append(out)
-    shutil.rmtree(tmp, ignore_errors=True)
+    from PIL import Image
+    files = {}
+    for title, (key, hidden) in PRINT_VIEWS.items():
+        tmp = Path(tempfile.mkdtemp())
+        wb = load_workbook(path)
+        for ws in wb.worksheets:
+            ws.sheet_state = "visible" if ws.title == title else "hidden"
+        wb.active = wb.sheetnames.index(title)
+        ws = wb[title]
+        split_columns(ws)
+        for col in hidden:
+            ws.column_dimensions[col].hidden = True
+        if key in FIXED_ROWS:
+            for r in range(2, ws.max_row + 1):
+                ws.row_dimensions[r].height = FIXED_ROWS[key]
+        ws.sheet_properties.pageSetUpPr.fitToPage = False
+        ws.page_setup.scale = 100
+        ws.page_setup.paperSize = ws.PAPERSIZE_A3
+        ws.page_setup.orientation = "portrait"
+        src = tmp / f"view_{key}.xlsx"
+        wb.save(src)
+        soffice(src, "pdf", tmp)
+        doc = pymupdf.open(tmp / f"view_{key}.pdf")
+        pages = []
+        for i, pg in enumerate(doc):
+            pix = pg.get_pixmap(dpi=170)
+            part = tmp / f"p{i}.png"
+            pix.save(part)
+            crop(part)
+            pages.append(Image.open(part).convert("RGB"))
+        width = max(im.width for im in pages)
+        canvas = Image.new("RGB", (width, sum(im.height for im in pages)), "white")
+        y = 0
+        for im in pages:
+            canvas.paste(im, (0, y))
+            y += im.height
+        out = OUT / f"sheet_{key}.png"
+        canvas.save(out)
+        files[key] = out
+        shutil.rmtree(tmp, ignore_errors=True)
     return files
 
 
@@ -364,9 +419,9 @@ def chart_stakeholders():
         ax.scatter(*pos, s=260, color=roles[key], edgecolor="white", zorder=3)
         dx, dy, ha = LABEL_POS.get(s.name, (10, 6, "left"))
         ax.annotate(s.name, pos, xytext=(dx, dy), textcoords="offset points", fontsize=9, color=INK, ha=ha)
-    ax.axvline(3, color=MUTED, linewidth=0.8, linestyle=":")
-    ax.axhline(3, color=MUTED, linewidth=0.8, linestyle=":")
-    for (x, y, t) in [(1.1, 5.3, "задовольняти"), (4.0, 5.3, "керувати тісно"), (1.1, 0.6, "спостерігати"), (4.0, 0.6, "інформувати")]:
+    ax.axvline(3.5, color=MUTED, linewidth=0.8, linestyle=":")
+    ax.axhline(3.5, color=MUTED, linewidth=0.8, linestyle=":")
+    for (x, y, t) in [(0.6, 5.35, "задовольняти"), (3.6, 5.35, "керувати тісно"), (0.6, 0.55, "спостерігати"), (3.6, 0.55, "інформувати")]:
         ax.text(x, y, t, color=MUTED, fontsize=9, style="italic")
     for k, c in roles.items():
         ax.scatter([], [], color=c, s=80, label=k)
@@ -397,9 +452,9 @@ def chart_costs():
     a1.set_ylim(0, 2400)
     a1.legend(frameon=False, fontsize=9, loc="upper left")
     axes(a1)
-    a2.plot(ns, [m.average_cost(n) for n in ns], color=COLORS[2], linewidth=2, label="C(N) / N")
+    a2.plot(ns, [m.average_cost(n) for n in ns], color=COLORS[0], linewidth=2, label="C(N) / N")
     a2.plot(ns, [v] * len(ns), color=COLORS[1], linewidth=1.5, linestyle="--", label="v = 16 EUR")
-    a2.scatter([85], [m.average_cost(85)], color=COLORS[2], zorder=3)
+    a2.scatter([85], [m.average_cost(85)], color=COLORS[0], zorder=3)
     a2.annotate(f"N = 85: {m.average_cost(85):.2f} EUR".replace(".", ","), (85, m.average_cost(85)), xytext=(-100, 18), textcoords="offset points", fontsize=9, color=INK)
     a2.set_ylim(0, 120)
     a2.set_xlabel("Кількість будівель N")
@@ -415,7 +470,7 @@ def chart_costs():
 def chart_value():
     vm = m.value_model()
     fig, (a1, a2) = plt.subplots(1, 2, figsize=(10, 4), dpi=200)
-    bars = a1.bar(["Як є, 12 діб", "Як буде, 1 доба"], [vm["loss_as_is_kwh"], vm["loss_to_be_kwh"]], color=[COLORS[1], COLORS[0]], width=0.55)
+    bars = a1.bar(["Як є, 12 діб", "Як буде, 1 доба"], [vm["loss_as_is_kwh"], vm["loss_to_be_kwh"]], color=[COLORS[0], COLORS[1]], width=0.55)
     for b in bars:
         a1.text(b.get_x() + b.get_width() / 2, b.get_height() + 1200, f"{b.get_height():,.0f}".replace(",", " "), ha="center", color=INK, fontsize=10)
     a1.set_ylabel("кВт·год на рік")
@@ -424,7 +479,7 @@ def chart_value():
     axes(a1)
     a1.grid(axis="x", visible=False)
     items = [("Енергія", vm["energy_eur"]), ("Час техніка", vm["labor_eur"]), ("Разом", vm["total_eur_year"])]
-    bars = a2.bar([i[0] for i in items], [i[1] for i in items], color=[COLORS[0], COLORS[2], COLORS[3]], width=0.55)
+    bars = a2.bar([i[0] for i in items], [i[1] for i in items], color=[COLORS[0], COLORS[1], COLORS[2]], width=0.55)
     for b in bars:
         a2.text(b.get_x() + b.get_width() / 2, b.get_height() + 150, f"{b.get_height():,.0f}".replace(",", " "), ha="center", color=INK, fontsize=10)
     a2.set_ylabel("EUR на рік")
@@ -447,13 +502,13 @@ def chart_assumptions():
         for y in range(1, 6):
             ax.add_patch(plt.Rectangle((x - 0.5, y - 0.5), 1, 1, color=COLORS[1] if x * y >= 16 else (COLORS[3] if x * y >= 9 else "#f4f3ee"), alpha=0.18 if x * y >= 9 else 1, linewidth=0))
     for (x, y), ids in groups.items():
-        col = COLORS[1] if ids[0] in top else COLORS[0]
+        col = COLORS[0] if ids[0] in top else COLORS[1]
         ax.scatter(x, y, s=500 + 220 * (len(ids) - 1), color=col, zorder=3, edgecolor="white")
         ax.text(x, y, "\n".join(ids), ha="center", va="center", color="white", fontsize=8, fontweight="bold", zorder=4)
     from matplotlib.patches import Patch
     ax.add_artist(ax.legend(handles=[Patch(color=COLORS[1], alpha=0.18, label="пріоритет від 16"), Patch(color=COLORS[3], alpha=0.18, label="пріоритет від 9 до 15"), Patch(color="#f4f3ee", label="пріоритет до 8")], loc="upper left", frameon=False, fontsize=9))
-    ax.scatter([], [], color=COLORS[1], s=80, label="топ 5 за пріоритетом")
-    ax.scatter([], [], color=COLORS[0], s=80, label="інші припущення")
+    ax.scatter([], [], color=COLORS[0], s=80, label="топ 5 за пріоритетом")
+    ax.scatter([], [], color=COLORS[1], s=80, label="інші припущення")
     ax.set_xlim(0.5, 5.5)
     ax.set_ylim(0.5, 5.5)
     ax.set_xticks(range(1, 6))
@@ -496,26 +551,32 @@ n4 -> n3 [dir=back];
 
 def diagram_scenario():
     dot("fig_scenario", '''digraph G {
-rankdir=TB; nodesep=0.35; ranksep=0.35;
-node [shape=box, style="rounded,filled", fillcolor="#dce8f7", color="#2a78d6", fontname="Arial", fontsize=11];
+rankdir=LR; nodesep=0.3; ranksep=0.35; newrank=true;
+node [shape=box, style="rounded,filled", fillcolor="#dce8f7", color="#2a78d6", fontname="Arial", fontsize=11, width=2.3, height=0.8];
 edge [color="#52514e", fontname="Arial", fontsize=10];
-m [label="30 лічильників\\nModbus RTU, імпульсні входи"];
-g [label="Шлюз: опитування кожні 15 хв"];
-c [label="Зв'язок є?", shape=diamond, fillcolor="#fff4d6", color="#eda100"];
-b [label="Буфер до 72 год\\nстатус missing до дозавантаження", fillcolor="#fbe1d6", color="#eb6834"];
-q [label="MQTT 5, QoS 1\\nконтроль якості показів"];
-s [label="Інтервальне споживання\\nрізниця накопичувальних показів"];
-a [label="Порівняння з базовою лінією\\n4 інтервали > база + max(3σ; 10%)"];
-n [label="Сповіщення з оцінкою\\nкВт·год і EUR на добу"];
-i [label="Інцидент: технік, причина, закриття"];
-r [label="Підтвердження повернення до бази\\nзбережений обсяг і місячний звіт"];
+m [label="30 лічильників\\nModbus RTU,\\nімпульсні входи"];
+g [label="Шлюз:\\nопитування\\nкожні 15 хв"];
+c [label="Зв'язок\\nє?", shape=diamond, fillcolor="#fff4d6", color="#eda100", width=1.2];
+b [label="Буфер до 72 год,\\nстатус missing до\\nдозавантаження", fillcolor="#fbe1d6", color="#eb6834"];
+q [label="MQTT 5, QoS 1,\\nконтроль якості\\nпоказів"];
+s [label="Інтервальне\\nспоживання: різниця\\nнакопичувальних показів"];
+a [label="Порівняння з базою:\\n4 інтервали > база + max(3σ; 10%)"];
+n [label="Сповіщення\\nз оцінкою кВт·год\\nі EUR на добу"];
+i [label="Інцидент:\\nтехнік, причина,\\nзакриття"];
+r [label="Повернення до бази,\\nзбережений обсяг,\\nмісячний звіт"];
+{rank=same; m; r;}
+{rank=same; g; i;}
+{rank=same; c; b; n;}
+{rank=same; q; a;}
 m -> g -> c;
 c -> q [label="так"];
 c -> b [label="ні"];
-b -> q [label="після відновлення", style=dashed];
-q -> s -> a;
-a -> n [label="аномалія"];
-n -> i -> r;
+b -> q [label="після\\nвідновлення", style=dashed];
+q -> s;
+a -> s [dir=back];
+n -> a [dir=back, label="аномалія"];
+i -> n [dir=back];
+r -> i [dir=back];
 }''')
 
 
