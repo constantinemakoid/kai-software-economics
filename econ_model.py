@@ -383,3 +383,468 @@ DATA_QUESTIONS = [
     "Чи дозволяють договори оренди передавати власнику дані субобліку орендаря?",
     "З якого бюджету і в якому обсязі власник готовий оплачувати моніторинг?",
 ]
+
+
+HOURS_DAY = 8
+FOCUS = 0.7
+DAYS_WEEK = 5
+Z80 = 0.8416212335729143
+PROJECT_START = "2026-11-02"
+HOLIDAYS = ["2026-12-31", "2027-01-01"]
+
+
+@dataclass(frozen=True)
+class Role:
+    rid: str
+    name: str
+    fte: float
+    duties: str
+
+    @property
+    def hours_day(self):
+        return self.fte * HOURS_DAY * FOCUS
+
+    @property
+    def hours_week(self):
+        return self.hours_day * DAYS_WEEK
+
+
+ROLES = [
+    Role("BA", "BA/PM", 0.5, "вимоги, backlog, критерії приймання, розмітка аномалій, комунікація з пілотною будівлею; UX прототипи дашборда"),
+    Role("D1", "Розробник 1", 1.0, "ПЗ шлюзу Modbus і MQTT, приймання показів, деградований режим, звіти і RBAC"),
+    Role("D2", "Розробник 2", 1.0, "реєстр, базова лінія, виявлення аномалій, сповіщення, інциденти, вебінтерфейс"),
+    Role("QA", "QA", 0.75, "тест-стенд лічильників, автотести інтеграції, навантажувальні тести, приймання"),
+    Role("OPS", "DevOps", 0.5, "IaC, CI/CD, середовища, моніторинг, резервні копії, монтаж шлюзу в пілоті"),
+]
+
+TEAM_HOURS_WEEK = sum(r.hours_week for r in ROLES)
+
+
+@dataclass(frozen=True)
+class Package:
+    wid: str
+    name: str
+    dod: str
+    hours: dict
+    preds: tuple
+    o: float
+    m: float
+    p: float
+    scope: str = ""
+    p_note: str = ""
+
+    @property
+    def e(self):
+        return (self.o + 4 * self.m + self.p) / 6
+
+    @property
+    def sigma(self):
+        return (self.p - self.o) / 6
+
+    @property
+    def var(self):
+        return self.sigma ** 2
+
+    @property
+    def effort_m(self):
+        return sum(self.hours.values())
+
+    @property
+    def effort_e(self):
+        return self.effort_m * self.e / self.m
+
+    @property
+    def lead(self):
+        return max(self.hours, key=self.hours.get)
+
+
+WBS_GROUPS = [
+    ("1", "Підготовка і архітектура"),
+    ("2", "Збирання і якість даних"),
+    ("3", "Аналітика і реакція"),
+    ("4", "Інтерфейси і звітність"),
+    ("5", "Якість, пілот і випуск"),
+]
+
+WBS = [
+    Package("1.1", "Scope freeze: уточнений backlog і критерії приймання",
+            "116 SP оцінено командою, критерії приймання F1...F11 і NFR1...NFR5 погоджено, журнал змін scope підписано",
+            {"BA": 22, "D1": 10, "D2": 10, "QA": 10, "OPS": 6}, (), 6, 8, 12, "усі",
+            "довше, якщо власник пілотної будівлі змінює перелік точок обліку"),
+    Package("1.2", "Architecture spike: прототип шлюзу і вибір сховища",
+            "прототип зчитав 3 типи лічильників по Modbus RTU/TCP; ADR щодо БД часових рядів; тест приймання 30 × 96 записів на добу",
+            {"BA": 8, "D1": 64, "D2": 56, "QA": 12, "OPS": 24}, (("1.1", "FS", 0),), 8, 12, 24, "F2, F3, NFR1",
+            "ключова невизначеність варіанта: карта регістрів Modbus надходить від постачальника лічильників (A12), частина лічильників відповідає нестабільно; у P закладено 2 ітерації очікування по 5 робочих днів"),
+    Package("1.3", "Інфраструктура: IaC, CI/CD, середовища, моніторинг",
+            "середовища dev, stage, prod створюються з коду; конвеєр CI/CD до 15 хв; моніторинг і резервні копії (NFR3)",
+            {"OPS": 52, "QA": 4}, (("1.2", "FS", 0),), 18, 25, 35, "NFR3",
+            "довше, якщо обраний брокер MQTT потребує власного кластера замість керованого сервісу"),
+    Package("2.1", "F1 Реєстр будівлі й лічильників",
+            "дерево ввід, поверх, орендар, споживач без циклів; 30 лічильників описано за 2 год",
+            {"D2": 60, "QA": 16, "BA": 8, "OPS": 2}, (("1.2", "FS", 0),), 9, 11, 15, "F1"),
+    Package("2.2", "F2 ПЗ шлюзу: опитування Modbus, імпульсні входи, MQTT 5",
+            "на тест-стенді не менше 99% інтервалів доставлено за 7 діб стабільного зв'язку",
+            {"D1": 86, "QA": 20, "BA": 6, "OPS": 6}, (("1.2", "FS", 0),), 13, 16, 25, "F2",
+            "різні реалізації Modbus у постачальників: порядок слів float32, таймаути RS-485"),
+    Package("2.3", "F4 Приймання показів і контроль якості",
+            "100% з 20 штучних помилкових записів позначено; інтервальне споживання як різниця накопичувальних показів",
+            {"D1": 72, "QA": 19, "BA": 6, "OPS": 4}, (("2.2", "FS", 0),), 11, 13, 19, "F4"),
+    Package("2.4", "F3 Деградований режим: буфер 72 год, дозавантаження",
+            "після обривів 1, 6, 24 год дозавантажено не менше 99,5% інтервалів за 30 хв; 0 хибних алертів на прогалинах",
+            {"D1": 88, "QA": 28, "BA": 6, "OPS": 6}, (("2.3", "FS", 0), ("5.1", "FS", 0)), 13, 16, 31, "F3, NFR2",
+            "ключова невизначеність варіанта на рівні пакета: поведінка конкретних лічильників після перезапуску (скидання лічильника, перехід через нуль), ідемпотентність дозавантаження"),
+    Package("3.1", "F5 Базова лінія",
+            "медіана 4 однакових днів тижня і MAD для 30 лічильників розраховуються не довше 60 с",
+            {"D2": 60, "QA": 13, "BA": 8, "OPS": 2}, (("2.1", "FS", 0),), 9, 11, 16, "F5"),
+    Package("3.2", "F6 Виявлення аномалій",
+            "на розмічених історичних даних precision не менше 0,8, recall не менше 0,7",
+            {"D2": 88, "BA": 20, "QA": 24, "OPS": 2}, (("3.1", "FS", 0),), 11, 16, 29, "F6",
+            "поріг max(3σ; 10%) може потребувати 2...3 циклів налаштування на розмічених даних (A7)"),
+    Package("3.3", "F7 Сповіщення і ескалація",
+            "95% сповіщень надіслано до 2 хв після фіксації аномалії; ескалація SMS після 30 хв без підтвердження",
+            {"D2": 50, "QA": 14, "BA": 4, "OPS": 4}, (("3.2", "FS", 0),), 7, 9, 13, "F7"),
+    Package("4.1", "F8 Картка інциденту",
+            "інцидент закривається лише з причиною з довідника; фіксується збережений обсяг кВт·год",
+            {"D2": 60, "QA": 18, "BA": 8, "OPS": 2}, (("3.3", "FS", 0),), 9, 11, 15, "F8"),
+    Package("4.2", "F9 Дашборд будівлі",
+            "звіт за 30 діб для 30 лічильників (86 400 точок) відкривається до 2 с",
+            {"D2": 82, "QA": 22, "BA": 10, "OPS": 4}, (("4.1", "FS", 0),), 11, 15, 23, "F9, NFR4",
+            "агрегування 86 400 точок до 2 с може вимагати попередньо обчислених агрегатів"),
+    Package("4.3", "F10 Імпорт рахунку і звірка з вводом",
+            "розбіжність понад 3% між рахунком і лічильником вводу позначається для перевірки",
+            {"D1": 38, "QA": 12, "BA": 6, "OPS": 2}, (("2.4", "FS", 0),), 6, 7, 10, "F10"),
+    Package("4.4", "F11 Звіт орендарю і ролі доступу",
+            "PDF і CSV по власних точках обліку; 100% тестів RBAC пройдено; MFA для адміністраторів",
+            {"D1": 60, "QA": 18, "BA": 6, "OPS": 4}, (("4.3", "FS", 0),), 9, 11, 16, "F11, NFR5"),
+    Package("5.1", "Тест-стенд: 6 типів лічильників і імітатор обривів",
+            "стенд RS-485 з 6 типами лічильників, керований імітатор обривів зв'язку, автотести інтеграції в CI",
+            {"QA": 30, "OPS": 4}, (("1.2", "SS", 5),), 15, 22, 32, "F2, F3",
+            "строк постачання лічильників від 2 постачальників: зовнішнє очікування, P відповідає 6 тижням"),
+    Package("5.2", "Feature complete: системне і навантажувальне тестування",
+            "усі критерії приймання F1...F11 перевірено; NFR1 і NFR4 підтверджено навантажувальним тестом на 20 користувачах",
+            {"QA": 40, "D1": 24, "D2": 24, "BA": 8, "OPS": 10}, (("4.2", "FS", 0), ("4.4", "FS", 0)), 8, 10, 16, "NFR1, NFR4"),
+    Package("5.3", "Стабілізація: виправлення дефектів і пентест RBAC",
+            "0 відкритих дефектів критичного і високого рівня; звіт пентесту RBAC без критичних знахідок",
+            {"D1": 46, "D2": 46, "QA": 30, "OPS": 8, "BA": 4}, (("5.2", "FS", 0),), 7, 10, 20, "усі",
+            "кількість дефектів після інтеграції з реальними лічильниками невідома до 5.2"),
+    Package("5.4", "Пілот: монтаж шлюзу і накопичення 4 тижнів історії",
+            "шлюз і 30 лічильників у пілотній будівлі передають дані; накопичено 28 діб історії для базової лінії F5",
+            {"OPS": 24, "BA": 16, "D1": 6, "QA": 4}, (("2.4", "FS", 0), ("1.3", "FS", 0)), 23, 25, 35, "F2, F3, F5",
+            "доступ до щитових і погодження власника: зовнішнє очікування до 10 робочих днів"),
+    Package("5.5", "Пілотна валідація на реальних даних",
+            "F6 на 28 добах реальних даних: precision не менше 0,8; F3: реальні обриви дозавантажено не менше 99,5%",
+            {"BA": 18, "QA": 8, "D2": 6, "D1": 4, "OPS": 4}, (("5.4", "FS", 0), ("5.2", "FS", 0)), 7, 10, 16, "F3, F5, F6"),
+    Package("5.6", "Release readiness: документація, навчання, go/no-go",
+            "runbook, інструкція енергоменеджера, навчання 1 год, рішення go/no-go власника пілотної будівлі",
+            {"BA": 14, "OPS": 14, "QA": 6, "D1": 4, "D2": 4}, (("5.3", "FS", 0), ("5.5", "FS", 0)), 4, 5, 8, "усі"),
+]
+
+WBS_BY_ID = {w.wid: w for w in WBS}
+
+KEY_PERT = ["1.2", "2.4", "3.2", "4.2", "5.2", "5.3"]
+
+
+def successors():
+    succ = {w.wid: [] for w in WBS}
+    for w in WBS:
+        for pid, kind, lag in w.preds:
+            succ[pid].append((w.wid, kind, lag))
+    return succ
+
+
+def cpm(durations=None):
+    d = durations or {w.wid: w.e for w in WBS}
+    es, ef = {}, {}
+    for w in WBS_TOPO():
+        starts = [0.0]
+        for pid, kind, lag in w.preds:
+            starts.append((ef[pid] if kind == "FS" else es[pid]) + lag)
+        es[w.wid] = max(starts)
+        ef[w.wid] = es[w.wid] + d[w.wid]
+    end = max(ef.values())
+    succ = successors()
+    ls, lf = {}, {}
+    for w in reversed(WBS_TOPO()):
+        bounds = [end]
+        for sid, kind, lag in succ[w.wid]:
+            bounds.append(ls[sid] - lag if kind == "FS" else ls[sid] - lag + d[w.wid])
+        lf[w.wid] = min(bounds)
+        ls[w.wid] = lf[w.wid] - d[w.wid]
+    out = {}
+    for w in WBS:
+        tf = ls[w.wid] - es[w.wid]
+        out[w.wid] = {"d": d[w.wid], "es": es[w.wid], "ef": ef[w.wid], "ls": ls[w.wid], "lf": lf[w.wid],
+                      "float": tf, "critical": abs(tf) < 1e-9}
+    return out, end
+
+
+def WBS_TOPO():
+    done, order = set(), []
+    while len(order) < len(WBS):
+        for w in WBS:
+            if w.wid not in done and all(p in done for p, _, _ in w.preds):
+                order.append(w)
+                done.add(w.wid)
+    return order
+
+
+def critical_path(durations=None):
+    sched, _ = cpm(durations)
+    return [w.wid for w in WBS_TOPO() if sched[w.wid]["critical"]]
+
+
+def p50_p80():
+    path = critical_path()
+    mu = sum(WBS_BY_ID[i].e for i in path)
+    var = sum(WBS_BY_ID[i].var for i in path)
+    sigma = var ** 0.5
+    p80 = mu + Z80 * sigma
+    return {"path": path, "mu": mu, "var": var, "sigma": sigma, "p50": mu, "p80": p80, "contingency": p80 - mu}
+
+
+def monte_carlo(n=20000, seed=14):
+    import numpy as np
+    rng = np.random.default_rng(seed)
+    samples = {}
+    for w in WBS:
+        a = 1 + 4 * (w.m - w.o) / (w.p - w.o)
+        b = 1 + 4 * (w.p - w.m) / (w.p - w.o)
+        samples[w.wid] = w.o + (w.p - w.o) * rng.beta(a, b, n)
+    order = WBS_TOPO()
+    ef = {}
+    es = {}
+    for w in order:
+        start = np.zeros(n)
+        for pid, kind, lag in w.preds:
+            start = np.maximum(start, (ef[pid] if kind == "FS" else es[pid]) + lag)
+        es[w.wid] = start
+        ef[w.wid] = start + samples[w.wid]
+    total = np.max(np.vstack([ef[w.wid] for w in WBS]), axis=0)
+    crit_count = {w.wid: 0 for w in WBS}
+    succ = successors()
+    ls = {}
+    for w in reversed(order):
+        bound = total.copy()
+        for sid, kind, lag in succ[w.wid]:
+            bound = np.minimum(bound, ls[sid] - lag if kind == "FS" else ls[sid] - lag + samples[w.wid])
+        ls[w.wid] = bound - samples[w.wid]
+    for w in WBS:
+        crit_count[w.wid] = float(np.mean(np.abs(ls[w.wid] - es[w.wid]) < 1e-6))
+    return {"total": total, "p50": float(np.percentile(total, 50)), "p80": float(np.percentile(total, 80)),
+            "mean": float(np.mean(total)), "criticality": crit_count, "n": n, "seed": seed}
+
+
+@dataclass(frozen=True)
+class BacklogItem:
+    bid: str
+    name: str
+    sp: int
+    wbs: str
+    reason: str
+
+
+BACKLOG = [
+    BacklogItem("B1", "F1 Реєстр будівлі й лічильників", 8, "2.1", "CRUD з деревом і перевіркою циклів, імпорт карти регістрів"),
+    BacklogItem("B2", "F2 ПЗ шлюзу Modbus і MQTT", 13, "2.2", "два протоколи, імпульсні входи, QoS 1, невідомі реалізації Modbus"),
+    BacklogItem("B3", "F3 Деградований режим", 13, "2.4", "буфер, ідемпотентне дозавантаження, статуси якості, ключова невизначеність"),
+    BacklogItem("B4", "F4 Приймання показів і контроль якості", 13, "2.3", "чотири правила якості, перехід через нуль, різниця накопичувальних показів"),
+    BacklogItem("B5", "F5 Базова лінія", 8, "3.1", "медіана і MAD по 96 слотах, перерахунок за розкладом"),
+    BacklogItem("B6", "F6 Виявлення аномалій", 13, "3.2", "правило 4 інтервалів, нічне навантаження, налаштування порогу на розмічених даних"),
+    BacklogItem("B7", "F7 Сповіщення і ескалація", 8, "3.3", "три канали, ескалація, оцінка перевитрати в кВт·год і EUR"),
+    BacklogItem("B8", "F8 Картка інциденту", 8, "4.1", "життєвий цикл інциденту, довідник причин, підтвердження повернення до бази"),
+    BacklogItem("B9", "F9 Дашборд будівлі", 13, "4.2", "профіль доби, факт і база, топ 5 споживачів, продуктивність 2 с"),
+    BacklogItem("B10", "F10 Імпорт рахунку і звірка", 8, "4.3", "формат CSV двох постачальників, звірка з лічильником вводу, межі розрахункового періоду"),
+    BacklogItem("B11", "F11 Звіт орендарю і ролі доступу", 8, "4.4", "PDF і CSV, RBAC, MFA для адміністраторів"),
+    BacklogItem("B12", "NFR1 і NFR4: затримка і навантаження", 3, "5.2", "сценарій k6 і панелі затримки, без нової функціональності"),
+]
+
+VELOCITY = [17, 19, 16, 21, 18, 20]
+BACKLOG_SP = 116
+SPRINT_WEEKS = 2
+
+
+def median(xs):
+    s = sorted(xs)
+    n = len(s)
+    return (s[n // 2 - 1] + s[n // 2]) / 2 if n % 2 == 0 else s[n // 2]
+
+
+def velocity_forecast(backlog=BACKLOG_SP, vel=VELOCITY):
+    import math
+    med = median(vel)
+    res = {}
+    for k, v in (("fast", max(vel)), ("central", med), ("slow", min(vel))):
+        sprints = math.ceil(backlog / v)
+        res[k] = {"velocity": v, "ratio": backlog / v, "sprints": sprints, "weeks": sprints * SPRINT_WEEKS}
+    res["median"] = med
+    return res
+
+
+@dataclass(frozen=True)
+class UcpActor:
+    name: str
+    kind: str
+    rule: str
+
+
+UCP_ACTORS = [
+    UcpActor("SMS-шлюз (REST API)", "S", "системний API"),
+    UcpActor("Сервіс транзакційної пошти (REST API)", "S", "системний API"),
+    UcpActor("Bot API месенджера", "S", "системний API"),
+    UcpActor("Шлюз з лічильниками (Modbus RTU/TCP, MQTT 5)", "A", "взаємодія через протокол"),
+    UcpActor("Енергоменеджер або власник (адміністративна роль будівлі)", "C", "людина через GUI"),
+    UcpActor("Технік служби експлуатації", "C", "людина через GUI"),
+]
+
+
+@dataclass(frozen=True)
+class UseCase:
+    uid: str
+    name: str
+    tx: int
+    func: str
+
+    @property
+    def kind(self):
+        return "S" if self.tx <= 3 else ("A" if self.tx <= 7 else "C")
+
+
+USE_CASES = [
+    UseCase("UC1", "Зареєструвати будівлю і ієрархію лічильників", 6, "F1"),
+    UseCase("UC2", "Налаштувати шлюз і розклад опитування", 5, "F2"),
+    UseCase("UC3", "Передати пакет показів", 3, "F2"),
+    UseCase("UC4", "Дозавантажити буфер після обриву зв'язку", 9, "F3"),
+    UseCase("UC5", "Перевірити якість показу", 5, "F4"),
+    UseCase("UC6", "Перерахувати базову лінію", 4, "F5"),
+    UseCase("UC7", "Виявити аномалію і оцінити перевитрату", 8, "F6"),
+    UseCase("UC8", "Надіслати сповіщення з ескалацією", 6, "F7"),
+    UseCase("UC9", "Опрацювати інцидент до повернення до бази", 10, "F8"),
+    UseCase("UC10", "Переглянути дашборд будівлі", 3, "F9"),
+    UseCase("UC11", "Імпортувати рахунок і звірити з вводом", 5, "F10"),
+    UseCase("UC12", "Сформувати і надіслати звіт орендарю", 5, "F11"),
+    UseCase("UC13", "Призначити роль доступу", 2, "F11, NFR5"),
+    UseCase("UC14", "Увійти з MFA", 3, "NFR5"),
+    UseCase("UC15", "Переглянути стан шлюзів і якість даних", 2, "F3, F4"),
+]
+
+UCP_TCF = 0.90
+UCP_ECF = 0.90
+UCP_PF = 22
+ACTOR_W = {"S": 1, "A": 2, "C": 3}
+UC_W = {"S": 5, "A": 10, "C": 15}
+BOTTLENECK_UTIL = 0.85
+
+
+def ucp(pf=UCP_PF):
+    ac = {k: sum(1 for a in UCP_ACTORS if a.kind == k) for k in "SAC"}
+    uc = {k: sum(1 for u in USE_CASES if u.kind == k) for k in "SAC"}
+    uaw = sum(ac[k] * ACTOR_W[k] for k in "SAC")
+    uucw = sum(uc[k] * UC_W[k] for k in "SAC")
+    uucp = uaw + uucw
+    val = uucp * UCP_TCF * UCP_ECF
+    return {"actors": ac, "ucs": uc, "uaw": uaw, "uucw": uucw, "uucp": uucp, "ucp": val, "pf": pf, "effort": val * pf}
+
+
+def role_shares():
+    tot = {r.rid: 0.0 for r in ROLES}
+    for w in WBS:
+        for k, h in w.hours.items():
+            tot[k] += h
+    s = sum(tot.values())
+    return {k: v / s for k, v in tot.items()}, tot
+
+
+def ucp_calendar(pf=UCP_PF):
+    eff = ucp(pf)["effort"]
+    shares, _ = role_shares()
+    rows = {}
+    for r in ROLES:
+        h = eff * shares[r.rid]
+        rows[r.rid] = {"hours": h, "weeks": h / r.hours_week}
+    dev_hours = rows["D1"]["hours"] + rows["D2"]["hours"]
+    dev_weeks = dev_hours / (ROLE["D1"].hours_week + ROLE["D2"].hours_week)
+    bott = max(dev_weeks, *(rows[k]["weeks"] for k in ("BA", "QA", "OPS")))
+    return {"effort": eff, "roles": rows, "dev_weeks": dev_weeks, "bottleneck_weeks": bott,
+            "naive_weeks": eff / TEAM_HOURS_WEEK, "duration_weeks": bott / BOTTLENECK_UTIL}
+
+
+ROLE = {r.rid: r for r in ROLES}
+
+MR_DAYS = 15
+MR_NOTE = "системний сценарій ключової невизначеності: понад 10% лічильників пілотних будівель нестабільні (A5 не підтверджено); потрібні оцінювання прогалин, адаптери для 2 додаткових типів лічильників і повторне тестування F3"
+
+
+def workday(n):
+    import numpy as np
+    import math
+    return np.busday_offset(PROJECT_START, math.ceil(n - 1e-9), roll="forward", holidays=HOLIDAYS)
+
+
+def finish_date(n):
+    import numpy as np
+    import math
+    return np.busday_offset(PROJECT_START, max(math.ceil(n - 1e-9) - 1, 0), roll="forward", holidays=HOLIDAYS)
+
+
+def weekly_load():
+    sched, end = cpm()
+    import math
+    weeks = math.ceil(end / DAYS_WEEK)
+    load = {r.rid: [0.0] * weeks for r in ROLES}
+    for w in WBS:
+        s = sched[w.wid]
+        for k, h in w.hours.items():
+            rate = h * w.e / w.m / s["d"]
+            t = s["es"]
+            while t < s["ef"] - 1e-9:
+                nxt = min((math.floor(t / DAYS_WEEK + 1e-9) + 1) * DAYS_WEEK, s["ef"])
+                load[k][int(math.floor(t / DAYS_WEEK + 1e-9))] += rate * (nxt - t)
+                t = nxt
+    return load
+
+
+SCOPE_LOG = [
+    ("S1", "F1...F11, межі «поза MVP»", "без змін", "функції і 7 виключень перенесено з ЛР № 1", "немає"),
+    ("S2", "NFR1...NFR5", "без змін", "пороги перенесено; NFR1 і NFR4 оформлено окремим backlog item B12 (3 SP)", "+3 SP у backlog"),
+    ("S3", "F11 Звіт орендарю", "уточнено", "у MVP орендар отримує звіт файлом через пошту, без входу в GUI", "менше UC і актор орендаря не враховано в UCP"),
+    ("S4", "F5 Базова лінія", "уточнено", "медіана 4 однакових днів тижня потребує 28 діб історії", "у WBS додано пакет 5.4 з накопиченням історії паралельно з розробленням"),
+    ("S5", "F3 Деградований режим", "уточнено", "приймання на тест-стенді (5.1) і в пілоті (5.5) з реальними обривами", "залежність 2.4 від 5.1"),
+    ("S6", "F6 Виявлення аномалій", "уточнено", "precision і recall вимірюються спершу на історичних даних тесту A1, потім на 28 добах пілоту", "пакет 5.5"),
+    ("S7", "Команда MVP", "уточнено", "5 осіб з ЛР № 1 отримали FTE: BA/PM 0,5; 2 розробники по 1,0; QA 0,75; DevOps 0,5; UX виконує BA/PM", "3,75 FTE, 105 продуктивних люд.-год на тиждень"),
+    ("S8", "Припущення A5, A7, A12", "уточнено", "A12 і пакетний аспект A5 включено в P пакетів 1.2, 2.4; системний сценарій A5 винесено в management reserve", "без подвійного обліку ризику"),
+]
+
+
+MILESTONES = [
+    ("Scope freeze", ["1.1"]),
+    ("Architecture spike", ["1.2"]),
+    ("Feature complete", ["2.1", "2.2", "2.3", "2.4", "3.1", "3.2", "3.3", "4.1", "4.2", "4.3", "4.4"]),
+    ("Stabilization", ["5.3"]),
+    ("Release readiness", ["5.6"]),
+]
+
+
+def milestones():
+    sched, _ = cpm()
+    return [(name, max(sched[i]["ef"] for i in ids)) for name, ids in MILESTONES]
+
+
+def baseline():
+    import math
+    pp = p50_p80()
+    mc = monte_carlo()
+    days = math.ceil(max(pp["p80"], mc["p80"]) - 1e-9)
+    return {"p50": pp["p50"], "p80": pp["p80"], "p80_mc": mc["p80"], "p50_mc": mc["p50"], "days": days,
+            "contingency_formula": pp["contingency"], "contingency": days - pp["p50"], "mr": MR_DAYS,
+            "start": PROJECT_START, "finish": str(finish_date(days)), "finish_p50": str(finish_date(pp["p50"])),
+            "finish_mr": str(finish_date(days + MR_DAYS)), "weeks": days / DAYS_WEEK}
+
+
+def sp_phase_totals():
+    sched, end = cpm()
+    pre = sched["1.2"]["ef"]
+    fc = dict(milestones())["Feature complete"]
+    post = end - fc
+    vf = velocity_forecast()
+    return {"pre": pre, "post": post, "fc": fc,
+            **{k: (pre + vf[k]["weeks"] * DAYS_WEEK + post) for k in ("fast", "central", "slow")}}
