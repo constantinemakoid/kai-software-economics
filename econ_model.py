@@ -1178,6 +1178,8 @@ P4 = {
     "high_share": 0.10,
     "points_limit": 30,
     "gain_share": 0.20,
+    "episode_months": 12,
+    "grace_months": 3,
 }
 
 SCENARIOS = [("Низький", 0.70), ("Базовий", 1.00), ("Високий", 1.40)]
@@ -1227,6 +1229,41 @@ def tier_expected(t, p4=P4):
             "floor": floor_price(cogs, p4["target_gm"]), "markup": (rev - cogs) / cogs,
             "per_building": rev / n, "value_share": rev / n / value_model()["total_eur_month"],
             "client_share": t.client_cogs / cogs}
+
+
+def expected_building_cogs(p4=P4):
+    h = p4["high_share"]
+    return (1 - h) * cogs_building() + h * cogs_building(True, p4)
+
+
+def tier_expected_a3(t, p4=P4):
+    n = t.usage
+    rev = bill(t, n) + n * p4["high_share"] * overage_high(p4)
+    cogs = t.client_cogs + n * expected_building_cogs(p4)
+    return {"n": n, "revenue": rev, "cogs": cogs, "gp": rev - cogs, "gm": (rev - cogs) / rev,
+            "floor": floor_price(cogs, p4["target_gm"]), "overage": rev - bill(t, n)}
+
+
+def mix_gm(a3=False, tiers=TIERS):
+    f = tier_expected_a3 if a3 else tier_expected
+    rev = sum(t.mix * f(t)["revenue"] for t in tiers)
+    cogs = sum(t.mix * f(t)["cogs"] for t in tiers)
+    return (rev - cogs) / rev
+
+
+def grace_effect(months, p4=P4):
+    s = scenario(1.0, p4)
+    lost = s["high"] * p4["unstable_fee"] * months / p4["episode_months"]
+    rev = s["revenue"] - lost
+    pro = TIER["P"]
+    hu = high_usage_check(pro, p4)
+    billed = hu["rule"]["revenue"]
+    unbilled = billed - pro.high_buildings * p4["unstable_fee"]
+    cogs = hu["rule"]["cogs"]
+    e = p4["episode_months"]
+    pro_rev = billed * (e - months) + unbilled * months
+    return {"months": months, "over_rev": s["over_rev"] - lost, "revenue": rev, "gm": (rev - s["cogs"]) / rev,
+            "pro_month_gm": (unbilled - cogs) / unbilled, "pro_episode_gm": (pro_rev - e * cogs) / pro_rev}
 
 
 def high_usage_check(t, p4=P4):
@@ -1283,7 +1320,7 @@ def shift_mix(pro_share):
 def sensitivity4(delta=0.2):
     base = scenario(1.0)
     cases = [
-        ("Ціна: база і ціна будівлі", lambda s: scenario(1.0, price_mult=1 + s * delta)),
+        ("A8: ціна бази і будівлі", lambda s: scenario(1.0, price_mult=1 + s * delta)),
         ("A1: частка Pro", lambda s: scenario(1.0, tiers=shift_mix(TIER["P"].mix * (1 + s * delta)))),
         ("A2: будівель у клієнта Pro", lambda s: scenario(1.0, tiers=with_tier("P", usage=TIER["P"].usage * (1 + s * delta)))),
         ("A3: частка high usage", lambda s: scenario(1.0, p4={**P4, "high_share": P4["high_share"] * (1 + s * delta)})),
@@ -1341,4 +1378,6 @@ LR4_ASSUMPTIONS = [
     ("A5", "Розрахунковий період і валюта", "календарний місяць, EUR, ціни без ПДВ", "Д: варіант задає COGS у EUR за місяць", "усі суми"),
     ("A6", "Підключення будівлі", "шлюз і монтаж оплачуються разово за собівартістю, поза місячною моделлю", "П: обладнання не входить у v = 16 EUR ЛР № 1", "не входить у Revenue і COGS"),
     ("A7", "Сценарії", "70%, 100%, 140% від 85 будівель; mix, usage і ціни сталі", "Д: методичка, розділ 3.2", "Revenue, COGS"),
+    ("A8", "Готовність платити за будівлю", "130...135 EUR на місяць за будівлю, не більше 15% цінності 900 EUR", "П: гіпотеза A2 ЛР № 1, листами про намір не перевірена", "Revenue, GM"),
+    ("A9", "Стаціонарний стан доплати за нестабільний облік", "у сценаріях Y3 усі будівлі зі статусом «нестабільний облік» уже пройшли 2 місяці спостереження і 1 пільговий місяць; епізод нестабільності триває 12 місяців", "П: спрощення; вплив від 1 до 3 неоплачених місяців наведено в додатку", "Revenue overage, GM"),
 ]

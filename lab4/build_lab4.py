@@ -59,6 +59,7 @@ def sheet_params(wb):
         ("x4_value", "Цінність на будівлю", vm["total_eur_month"], "EUR/міс.", "Д", "ЛР № 1"),
         ("x4_energy", "Економія енергії на будівлю", vm["energy_eur"] / 12, "EUR/міс.", "Д", "ЛР № 1"),
         ("x4_gain", "Частка економії в gain-sharing", p4["gain_share"], "частка", "П", "альтернатива 2"),
+        ("x4_episode", "Тривалість епізоду нестабільності", p4["episode_months"], "міс.", "П", "A9"),
     ]
     for i, r in enumerate(rows, start=2):
         ws.append(list(r))
@@ -143,9 +144,14 @@ TARIFF_ROWS = [
     ("Частка цінності 900 EUR", lambda t, c: f"={c}16/x4_value", "calc"),
     ("Ціна будівлі не нижча за floor одиниці", lambda t, c: f'=IF({c}3>=x4_floor_unit,"так","ні")', "calc"),
     ("Частка COGS бази в COGS клієнта", lambda t, c: f"={c}8/{c}10", "calc"),
+    ("Очікуваний COGS будівлі з A3, EUR", lambda t, c: "=(1-x4_high_share)*x4_cogs+x4_high_share*x4_cogs_high", "calc"),
+    ("Очікуваний COGS клієнта з A3, EUR/міс.", lambda t, c: f"={c}8+{c}6*{c}20", "calc"),
+    ("Очікуваний overage з A3, EUR/міс.", lambda t, c: f"={c}6*x4_high_share*x4_over", "calc"),
+    ("Очікуваний рахунок з A3, EUR/міс.", lambda t, c: f"={c}9+{c}22", "calc"),
+    ("Gross margin з A3", lambda t, c: f"=({c}23-{c}21)/{c}23", "calc"),
 ]
 
-PCT_ROWS = {5, 12, 15, 17, 19}
+PCT_ROWS = {5, 12, 15, 17, 19, 24}
 
 
 def sheet_tariffs(wb):
@@ -153,7 +159,9 @@ def sheet_tariffs(wb):
     ws.append(["Показник", "Формула або підстава"] + [t.name for t in m.TIERS])
     notes = ["вхід", "вхід", "захисне правило", "A1", "A2", "A4", "год × 30", "база + ціна × usage", "COGS бази + usage × 16",
              "рахунок мінус COGS", "(Revenue − COGS) / Revenue", "COGS / (1 − 0,70)", "порівняння", "(ціна − COGS) / COGS",
-             "рахунок / usage", "ціна будівлі / цінність", "ціна будівлі ≥ 53,33", "COGS бази / COGS клієнта"]
+             "рахунок / usage", "ціна будівлі / цінність", "ціна будівлі ≥ 53,33", "COGS бази / COGS клієнта",
+             "0,9 × 16 + 0,1 × 30,88", "COGS бази + usage × 17,49", "usage × 0,10 × 55", "рахунок + overage",
+             "(Revenue − COGS) / Revenue"]
     for i, (label, f, kind) in enumerate(TARIFF_ROWS, start=2):
         ws.cell(i, 1, label)
         ws.cell(i, 2, notes[i - 2])
@@ -188,6 +196,22 @@ def sheet_tariffs(wb):
         ws.cell(r, 2).number_format = "0.00"
         ws.cell(r, 3).number_format = "0.0%"
     k.style_table(ws, w0, 1, w0 + 2, 3)
+    g0 = w0 + 4
+    ws.cell(g0, 1, "Зважена за A1 gross margin")
+    ws.cell(g0, 2, "Значення")
+
+    def weighted(rev, cogs):
+        num = "+".join(f"x4_mix_{t.tid}*({TCOL[t.tid]}{rev}-{TCOL[t.tid]}{cogs})" for t in m.TIERS)
+        den = "+".join(f"x4_mix_{t.tid}*{TCOL[t.tid]}{rev}" for t in m.TIERS)
+        return f"=({num})/({den})"
+    ws.cell(g0 + 1, 1, "Типова будівля, без A3")
+    ws.cell(g0 + 1, 2, weighted(9, 10))
+    ws.cell(g0 + 2, 1, "З урахуванням A3, дорівнює GM сценаріїв")
+    ws.cell(g0 + 2, 2, weighted(23, 21))
+    for r in (g0 + 1, g0 + 2):
+        ws.cell(r, 2).number_format = "0.00%"
+    k.style_table(ws, g0, 1, g0 + 2, 2)
+    LAYOUT["mix_row"] = g0
     col_widths(ws, [40, 25, 13, 13, 13])
     k.page(ws, landscape=False)
     LAYOUT["floor_row"] = w0
@@ -219,7 +243,35 @@ def sheet_high(wb):
                 ws[f"{TCOL[t.tid]}2"].fill = k.INPUT_FILL
                 ws[f"{TCOL[t.tid]}2"].number_format = "0"
     k.style_table(ws, 1, 1, len(rows) + 1, 5)
-    col_widths(ws, [34, 26, 12, 12, 12])
+    g0 = len(rows) + 3
+    ws.cell(g0, 1, "Неоплачених місяців з 12 (A9)")
+    ws.cell(g0, 2, "Формула")
+    grace = [
+        ("Overage, базовий сценарій, EUR", "overage − буд. high × 50 × m / 12",
+         lambda c: f"='Сценарії'!$C$12-'Сценарії'!$C$11*x4_fee*{c}{g0}/x4_episode"),
+        ("Revenue, базовий сценарій, EUR", "Revenue − та сама втрата",
+         lambda c: f"='Сценарії'!$C$13-'Сценарії'!$C$11*x4_fee*{c}{g0}/x4_episode"),
+        ("Gross margin, базовий сценарій", "(Revenue − COGS) / Revenue",
+         lambda c: f"=({c}{g0 + 2}-'Сценарії'!$C$16)/{c}{g0 + 2}"),
+        ("GM Pro, 20 буд., неоплачений місяць", "рахунок без доплати",
+         lambda c: "=($E$7-$E$2*x4_fee-$E$4)/($E$7-$E$2*x4_fee)"),
+        ("GM Pro, 20 буд., за 12 місяців", "зважено за місяцями",
+         lambda c: f"=($E$7*(x4_episode-{c}{g0})+($E$7-$E$2*x4_fee)*{c}{g0}-x4_episode*$E$4)/($E$7*(x4_episode-{c}{g0})+($E$7-$E$2*x4_fee)*{c}{g0})"),
+    ]
+    for j, c in enumerate("CDEF"):
+        ws[f"{c}{g0}"] = j
+        ws[f"{c}{g0}"].number_format = "0"
+    for i, (label, note, f) in enumerate(grace, start=g0 + 1):
+        ws.cell(i, 1, label)
+        ws.cell(i, 2, note)
+        for c in "CDEF":
+            ws[f"{c}{i}"] = f(c)
+            ws[f"{c}{i}"].number_format = "0.0%" if i >= g0 + 3 else "#,##0.00"
+    k.style_table(ws, g0, 1, g0 + len(grace), 6)
+    for c in "CDEF":
+        ws[f"{c}{g0}"].fill = k.INPUT_FILL
+    LAYOUT["grace_row"] = g0
+    col_widths(ws, [38, 31, 12, 12, 12, 12])
     k.page(ws, landscape=False)
 
 
@@ -322,6 +374,20 @@ def verify(path):
             checks[f"{name}_{key}"] = (ss[f"{c}{row}"].value, s[key])
     for i, (name, sc) in enumerate(m.model_scores(), start=2):
         checks[f"model_{i}"] = (ms[f"H{i}"].value, sc)
+    for t in m.TIERS:
+        c = TCOL[t.tid]
+        a3 = m.tier_expected_a3(t)
+        checks[f"a3_cogs_{t.tid}"] = (ts[f"{c}21"].value, a3["cogs"])
+        checks[f"a3_rev_{t.tid}"] = (ts[f"{c}23"].value, a3["revenue"])
+        checks[f"a3_gm_{t.tid}"] = (ts[f"{c}24"].value, a3["gm"])
+    g = LAYOUT["mix_row"]
+    checks["mix_gm"] = (ts[f"B{g + 1}"].value, m.mix_gm())
+    checks["mix_gm_a3"] = (ts[f"B{g + 2}"].value, m.mix_gm(True))
+    g = LAYOUT["grace_row"]
+    for j, c in enumerate("CDEF"):
+        ge = m.grace_effect(j)
+        checks[f"grace_gm_{j}"] = (hs[f"{c}{g + 3}"].value, ge["gm"])
+        checks[f"grace_pro_{j}"] = (hs[f"{c}{g + 5}"].value, ge["pro_episode_gm"])
     texts = [ts[f"{c}14"].value for c in "CDE"] + [ts[f"{c}18"].value for c in "CDE"] + [ps[f"F{e}"].value]
     ok = all(v in ("так", "збігається з варіантом") for v in texts)
     print("text checks:", texts)
@@ -517,12 +583,12 @@ def tariff_html():
              "отримано хоча б один валідний 15-хвилинний інтервал. Ціни в EUR за календарний місяць, без ПДВ. Підключення шлюзу "
              "оплачується окремо за собівартістю.")
     html = f"""<!doctype html><html><head><meta charset="utf-8"><style>
-body{{font-family:Arial,Helvetica,sans-serif;color:#0b0b0b;margin:0;background:#fff;width:900px}}
+body{{font-family:Arial,Helvetica,sans-serif;color:#0b0b0b;margin:0;background:#fff;width:1040px}}
 .wrap{{padding:20px 22px}}h1{{font-size:30px;margin:0 0 4px}}.sub{{color:#52514e;font-size:18px;margin:0 0 18px}}
 .grid{{display:flex;gap:12px}}.card{{flex:1;border:1px solid #e1e0d9;border-radius:8px;padding:12px 14px;background:#fbfbf9}}
-h2{{margin:0 0 6px;font-size:26px}}.who{{color:#52514e;font-size:16px;min-height:84px;margin:0}}
-.price{{font-size:19px;margin:10px 0 6px;line-height:1.4}}.ex{{font-size:16px;color:#52514e;margin:0 0 8px}}
-ul{{padding-left:18px;margin:0;font-size:17px;line-height:1.4}}.rules{{margin-top:16px;font-size:16.5px;color:#0b0b0b;border-top:1px solid #e1e0d9;padding-top:12px;line-height:1.5}}
+h2{{margin:0 0 6px;font-size:26px}}.who{{color:#52514e;font-size:17px;min-height:50px;margin:0}}
+.price{{font-size:20px;margin:10px 0 6px;line-height:1.4}}.ex{{font-size:17px;color:#52514e;margin:0 0 8px}}
+ul{{padding-left:18px;margin:0;font-size:18px;line-height:1.35}}.rules{{margin-top:16px;font-size:16.5px;color:#0b0b0b;border-top:1px solid #e1e0d9;padding-top:12px;line-height:1.5}}
 </style></head><body><div class="wrap"><h1>ЕнергоПульс: тарифна сітка</h1>
 <p class="sub">Hybrid base + usage: базовий платіж клієнта і ціна за активну будівлю на місяць</p>
 <div class="grid">{''.join(cards)}</div><p class="rules">{rules}</p></div></body></html>"""
@@ -530,7 +596,7 @@ ul{{padding-left:18px;margin:0;font-size:17px;line-height:1.4}}.rules{{margin-to
     path.write_text(html, encoding="utf-8")
     png = OUT / "tariff_grid.png"
     subprocess.run([CHROME, "--headless=new", "--disable-gpu", "--hide-scrollbars", f"--screenshot={png}",
-                    "--window-size=900,1300", "--force-device-scale-factor=2", path.as_uri()], check=True, capture_output=True, timeout=120)
+                    "--window-size=1040,1300", "--force-device-scale-factor=2", path.as_uri()], check=True, capture_output=True, timeout=120)
     k.crop(png)
     return png
 
