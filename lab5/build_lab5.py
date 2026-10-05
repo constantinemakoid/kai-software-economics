@@ -217,6 +217,8 @@ BE_ROWS = [
     ("x5_be_o_b", "Operating break-even, будівель", "units × 1,7", "=x5_be_o*x5_usage", "0.00"),
     ("x5_be_mos", "Запас безпеки Y3 ЛР № 4 над product BE", "(клієнти Y3 − BE) / клієнти Y3", "=(x5_clients-x5_be_p)/x5_clients", "0.00%"),
     ("x5_be_mos_o", "Запас безпеки M12 над operating BE", "(клієнти M12 − BE) / клієнти M12", "=('Прогноз 12 міс.'!$F$13-x5_be_o)/'Прогноз 12 міс.'!$F$13", "0.00%"),
+    ("x5_mos_oy3", "Запас безпеки Y3 ЛР № 4 над operating BE", "(клієнти Y3 − BE) / клієнти Y3", "=(x5_clients-x5_be_o)/x5_clients", "0.00%"),
+    ("x5_fix_room", "Допустимий приріст fixed OPEX для operating BE у M12", "(клієнти M12 − operating BE) × CM, EUR на місяць", "=('Прогноз 12 міс.'!$F$13-x5_be_o)*x5_be_cm", "#,##0.00"),
     ("x5_be_steady", "Стаціонарна база клієнтів", "нові / churn", "=x5_new/x5_churn", "0.00"),
 ]
 
@@ -419,7 +421,8 @@ def verify(path):
     for key, val in (("x5_be_p", b["product_units"]), ("x5_be_o", b["operating_units"]), ("x5_be_p_rev", b["product_revenue"]),
                      ("x5_be_o_rev", b["operating_revenue"]), ("x5_be_p_int", b["product_units_int"]),
                      ("x5_be_o_int", b["operating_units_int"]), ("x5_be_steady", f["steady"]),
-                     ("x5_be_mos", b["mos_product_y3"]), ("x5_be_mos_o", f["mos_operating_m12"])):
+                     ("x5_be_mos", b["mos_product_y3"]), ("x5_be_mos_o", f["mos_operating_m12"]),
+                     ("x5_mos_oy3", b["mos_operating_y3"]), ("x5_fix_room", m.scale_trigger()["room_operating"])):
         checks[key] = (be[f"D{LAYOUT['be_' + key]}"].value, val)
     for i, row in enumerate(f["rows"], start=2):
         checks[f"fc_cust_{i - 1}"] = (fc[f"F{i}"].value, row["customers"])

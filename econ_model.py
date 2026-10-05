@@ -1575,6 +1575,54 @@ def fixed_opex_reconciliation(p5=P5):
     return {"support": sup, "change": chg, "cloud_fixed": cloud_fixed, "known": known, "other": p5["fixed_opex"] - known}
 
 
+def scale_trigger(p5=P5, step=None):
+    fc = forecast(p5)
+    rows = fc["rows"]
+    be = fc["be"]
+    u = unit_economics(p5)
+    rec = fixed_opex_reconciliation(p5)
+    per_bld = unit_variable_cost()[0]["Обробка і зберігання показів"]
+    budget = [y["op"] / 12 for y in tco()["cloud"]["years"]]
+    first = next(r["m"] for r in rows if r["buildings"] > P["buildings_y3"])
+    step = P["fixed_platform"] if step is None else step
+    q = {**p5, "fixed_opex": p5["fixed_opex"] + step}
+    be2 = breakeven(q)
+    m12 = rows[-1]
+    mp = fc["first_product"]
+    out = {"first": first, "label": rows[first - 1]["label"], "per_bld": per_bld, "cloud_fixed": rec["cloud_fixed"],
+           "budget": budget, "step": step, "m12_customers": m12["customers"],
+           "room_operating": (m12["customers"] - be["operating_units"]) * u["cm_pa"],
+           "room_product": (rows[mp - 1]["customers"] - be["product_units"]) * u["cm_pa"],
+           "cogs_cloud_pa": per_bld * avg_usage(), "step_product_units": be2["product_units"],
+           "step_operating_units": be2["operating_units"],
+           "step_month_product": be_month(be2["product_units"], p5["new_clients"], p5["churn"], p5["horizon"]),
+           "step_month_operating": be_month(be2["operating_units"], p5["new_clients"], p5["churn"], p5["horizon"]),
+           "step_mos_m12": safety_margin(m12["customers"], be2["operating_units"])}
+    for key, i, year in (("m8", first, 0), ("m12", p5["horizon"], 1)):
+        n = rows[i - 1]["buildings"]
+        out[key] = {"buildings": n, "variable": per_bld * n, "total": rec["cloud_fixed"] + per_bld * n,
+                    "budget": budget[year], "over": rec["cloud_fixed"] + per_bld * n - budget[year]}
+    return out
+
+
+def presale_reconciliation(p5=P5):
+    cb = cash_burn()
+    rel = cb["release_frac"]
+    i = next(k for k, f in enumerate(rel) if 0 < f < 1)
+    post_may = cb["post"][i] + cb["cloud_op"][i] - DEV_CLOUD[i]
+    pre_release = sum(cb["total"][:i]) + cb["total"][i] - post_may
+    rec = fixed_opex_reconciliation(p5)
+    lr3_month = cb["total"][i + 1]
+    lr5_month = p5["fixed_opex"] + p5["acq_spend"]
+    may_lr5 = rel[i] * p5["fixed_opex"]
+    baseline = mvp_budget()["baseline"]
+    return {"may_frac": rel[i], "may_post": cb["post"][i], "may_cloud": cb["cloud_op"][i] - DEV_CLOUD[i], "may_lr3": post_may,
+            "may_lr5": may_lr5, "lr3_month": lr3_month, "lr3_support": cb["post"][i + 1], "lr3_cloud": cb["cloud_op"][i + 1],
+            "lr5_month": lr5_month, "cloud_fixed": rec["cloud_fixed"], "other": rec["other"], "acq": p5["acq_spend"],
+            "pre_release": pre_release, "baseline": baseline, "r2_left": cb["reserve_left"],
+            "delta": may_lr5 - (baseline - pre_release)}
+
+
 LR5_ASSUMPTIONS = [
     ("B1", "Обсяг верхнього рівня воронки", "70 кваліфікованих лідів на місяць (дзвінок з розрахунком економії відбувся)", "П: обов'язкове власне припущення; CPL 3 400 / 70 = 48,57 EUR", "воронка, CPL"),
     ("B2", "Activation rate", "30% лідів запускають безкоштовний пілот 3 міс. на 1 будівлі", "П: обов'язкове власне припущення; поріг A10 ЛР № 1", "воронка"),
