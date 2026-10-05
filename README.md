@@ -13,6 +13,8 @@
 * `lab3/out`: результати ЛР № 3 (xlsx, png).
 * `lab4/build_lab4.py`: ЛР № 4, порівняння трьох моделей монетизації, тарифи Basic, Standard, Pro моделі Hybrid base + usage, COGS і floor price, перевірка high usage, сценарії попиту 70%, 100%, 140%, чутливість; робоча книга з формулами і діаграмою, перевірка в LibreOffice, тарифна сітка в HTML.
 * `lab4/out`: результати ЛР № 4 (xlsx, png, html).
+* `lab5/build_lab5.py`: ЛР № 5, воронка, CAC, ARPA, gross і contribution margin, logo і revenue churn, LTV, payback, product і operating break-even, прогноз на 12 місяців, чутливість ±20%; робоча книга з формулами і діаграмою, перевірка в LibreOffice.
+* `lab5/out`: результати ЛР № 5 (xlsx, png).
 
 ## Запуск
 
@@ -22,6 +24,7 @@ python3 lab1/build_lab1.py
 python3 lab2/build_lab2.py
 python3 lab3/build_lab3.py
 python3 lab4/build_lab4.py
+python3 lab5/build_lab5.py
 ```
 
 Потрібні LibreOffice (шлях задається змінною SOFFICE), Graphviz (`dot`) і Google Chrome для рендеру тарифної сітки ЛР № 4.

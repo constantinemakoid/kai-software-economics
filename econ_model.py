@@ -1,3 +1,4 @@
+import math
 from dataclasses import dataclass
 from operator import sub
 
@@ -1380,4 +1381,202 @@ LR4_ASSUMPTIONS = [
     ("A7", "Сценарії", "70%, 100%, 140% від 85 будівель; mix, usage і ціни сталі", "Д: методичка, розділ 3.2", "Revenue, COGS"),
     ("A8", "Готовність платити за будівлю", "130...135 EUR на місяць за будівлю, не більше 15% цінності 900 EUR", "П: гіпотеза A2 ЛР № 1, листами про намір не перевірена", "Revenue, GM"),
     ("A9", "Стаціонарний стан доплати за нестабільний облік", "у сценаріях Y3 усі будівлі зі статусом «нестабільний облік» уже пройшли 2 місяці спостереження і 1 пільговий місяць; епізод нестабільності триває 12 місяців", "П: спрощення; вплив від 1 до 3 неоплачених місяців наведено в додатку", "Revenue overage, GM"),
+]
+
+
+P5 = {
+    "acq_spend": 3400.0,
+    "new_clients": 7,
+    "churn": 0.03,
+    "fixed_opex": 9000.0,
+    "leads": 70,
+    "activation": 0.30,
+    "pilots_retained": 14,
+    "pilot_months": 3,
+    "pilot_check_month": 1,
+    "spend_events": 1200.0,
+    "other_var_payments": 0.015,
+    "other_var_bad_debt": 0.010,
+    "other_var_partner": 0.035,
+    "horizon": 12,
+    "first_month": "2027-09",
+    "presale_months": 3,
+    "ltv_cap_months": 36,
+    "delta": 0.20,
+}
+
+OTHER_VAR_PARTS = [
+    ("Платіжна обробка і банківське обслуговування рахунків", "other_var_payments"),
+    ("Резерв безнадійної заборгованості", "other_var_bad_debt"),
+    ("Винагорода партнерам-інтеграторам: 10% виручки клієнтів, залучених партнерами (35% бази)", "other_var_partner"),
+]
+
+
+def other_var_share(p5=P5):
+    return sum(p5[key] for _, key in OTHER_VAR_PARTS)
+
+
+def funnel(p5=P5):
+    pilots = p5["leads"] * p5["activation"]
+    kept = p5["pilots_retained"]
+    paid = p5["new_clients"]
+    pilot_bm = pilots * p5["pilot_check_month"] + kept * (p5["pilot_months"] - p5["pilot_check_month"])
+    pilot_cost = pilot_bm * P4["cogs_unit"]
+    stages = [
+        {"stage": "Acquisition", "count": p5["leads"], "conv": None},
+        {"stage": "Activation", "count": pilots, "conv": pilots / p5["leads"]},
+        {"stage": "Retention", "count": kept, "conv": kept / pilots},
+        {"stage": "Revenue", "count": paid, "conv": paid / kept},
+    ]
+    marketing = p5["acq_spend"] - pilot_cost - p5["spend_events"]
+    return {"stages": stages, "pilots": pilots, "pilot_building_months": pilot_bm, "pilot_cost": pilot_cost,
+            "marketing": marketing, "events": p5["spend_events"], "lead_to_paid": paid / p5["leads"],
+            "pilot_to_paid": paid / pilots, "cpl": p5["acq_spend"] / p5["leads"], "cost_per_pilot": p5["acq_spend"] / pilots}
+
+
+def base_month_y3(price_mult=1.0):
+    return scenario(1.0, price_mult=price_mult)
+
+
+def unit_economics(p5=P5, price_mult=1.0):
+    s = base_month_y3(price_mult)
+    clients = s["clients"]
+    arpa = s["revenue"] / clients
+    cogs_pa = s["cogs"] / clients
+    gp_pa = arpa - cogs_pa
+    gm = gp_pa / arpa
+    ov = other_var_share(p5) * arpa
+    cm_pa = arpa - cogs_pa - ov
+    cac = p5["acq_spend"] / p5["new_clients"]
+    c = p5["churn"]
+    ltv = arpa * gm / c
+    ltv_cm = cm_pa / c
+    d = (1 + P3["discount"]) ** (1 / 12) - 1
+    ltv_disc = gp_pa * (1 + d) / (c + d)
+    n = p5["ltv_cap_months"]
+    ltv_cap = gp_pa * (1 - (1 - c) ** n) / c
+    return {"clients": clients, "revenue": s["revenue"], "cogs": s["cogs"], "arpa": arpa, "cogs_pa": cogs_pa,
+            "gp_pa": gp_pa, "gm": gm, "other_var": ov, "other_share": other_var_share(p5), "cm_pa": cm_pa,
+            "cm_ratio": cm_pa / arpa, "cac": cac, "churn": c, "lifetime": 1 / c, "ltv": ltv, "ltv_cm": ltv_cm,
+            "ltv_disc": ltv_disc, "ltv_cap": ltv_cap, "d_month": d, "ltv_cac": ltv / cac, "payback": cac / gp_pa,
+            "payback_cm": cac / cm_pa, "arpu_building": s["revenue"] / s["buildings"], "buildings": s["buildings"],
+            "usage": avg_usage()}
+
+
+def revenue_churn(p5=P5):
+    s = base_month_y3()
+    mrr = s["revenue"]
+    lost = p5["churn"] * mrr
+    contraction = s["over_rev"] / P4["episode_months"]
+    expansion = contraction
+    gross = (lost + contraction) / mrr
+    net = (lost + contraction - expansion) / mrr
+    u = unit_economics(p5)
+    return {"mrr": mrr, "lost": lost, "lost_clients": p5["churn"] * s["clients"], "contraction": contraction,
+            "expansion": expansion, "gross": gross, "net": net, "ltv_rev": u["gp_pa"] / gross}
+
+
+def breakeven(p5=P5, price_mult=1.0):
+    u = unit_economics(p5, price_mult)
+    fixed = p5["fixed_opex"]
+    acq = p5["acq_spend"]
+    prod = fixed / u["cm_pa"]
+    oper = (fixed + acq) / u["cm_pa"]
+    return {"cm_pa": u["cm_pa"], "cm_ratio": u["cm_ratio"], "fixed": fixed, "acq": acq, "product_units": prod,
+            "operating_units": oper, "product_units_int": math.ceil(prod - 1e-9), "operating_units_int": math.ceil(oper - 1e-9),
+            "product_revenue": fixed / u["cm_ratio"], "operating_revenue": (fixed + acq) / u["cm_ratio"],
+            "product_buildings": prod * avg_usage(), "operating_buildings": oper * avg_usage()}
+
+
+def month_label(i, p5=P5):
+    y, mo = map(int, p5["first_month"].split("-"))
+    k = mo - 1 + i
+    names = ["січ", "лют", "бер", "кві", "тра", "чер", "лип", "сер", "вер", "жов", "лис", "гру"]
+    return f"{names[k % 12]} {y + k // 12}"
+
+
+def forecast(p5=P5, price_mult=1.0):
+    u = unit_economics(p5, price_mult)
+    be = breakeven(p5, price_mult)
+    rows = []
+    prev = 0.0
+    cum = 0.0
+    for i in range(p5["horizon"]):
+        churned = prev * p5["churn"]
+        cust = prev - churned + p5["new_clients"]
+        rev = cust * u["arpa"]
+        cogs = cust * u["cogs_pa"]
+        ov = cust * u["other_var"]
+        cm = rev - cogs - ov
+        prod_res = cm - p5["fixed_opex"]
+        oper_res = prod_res - p5["acq_spend"]
+        cum += oper_res
+        rows.append({"m": i + 1, "label": month_label(i, p5), "start": prev, "new": p5["new_clients"], "churned": churned,
+                     "customers": cust, "buildings": cust * avg_usage(), "revenue": rev, "cogs": cogs, "other_var": ov,
+                     "cm": cm, "product_result": prod_res, "operating_result": oper_res, "cum_operating": cum})
+        prev = cust
+    first_prod = next((r["m"] for r in rows if r["cm"] >= p5["fixed_opex"] - 1e-9), None)
+    first_oper = next((r["m"] for r in rows if r["cm"] >= p5["fixed_opex"] + p5["acq_spend"] - 1e-9), None)
+    presale = p5["presale_months"] * (p5["fixed_opex"] + p5["acq_spend"])
+    return {"rows": rows, "first_product": first_prod, "first_operating": first_oper, "be": be,
+            "steady": p5["new_clients"] / p5["churn"], "cum_operating": cum, "presale_loss": presale,
+            "investment": mvp_budget()["baseline"]}
+
+
+def be_month(units, new, churn, horizon=12):
+    if units >= new / churn:
+        return None
+    t = math.ceil(math.log(1 - units * churn / new) / math.log(1 - churn) - 1e-9)
+    return t if t <= horizon else None
+
+
+def sensitivity5(p5=P5):
+    dlt = p5["delta"]
+    base = unit_economics(p5)
+    bbe = breakeven(p5)
+    out = {}
+    for s in (-1, 0, 1):
+        k = 1 + s * dlt
+        q = {**p5, "churn": p5["churn"] * k}
+        u = unit_economics(q)
+        be = breakeven(q)
+        out[("churn", s)] = {"value": q["churn"], "ltv": u["ltv"], "ltv_cac": u["ltv_cac"],
+                             "month_product": be_month(be["product_units"], q["new_clients"], q["churn"], q["horizon"]),
+                             "month_operating": be_month(be["operating_units"], q["new_clients"], q["churn"], q["horizon"])}
+        u = unit_economics(p5, price_mult=k)
+        be = breakeven(p5, price_mult=k)
+        out[("price", s)] = {"value": u["arpa"], "ltv": u["ltv"], "ltv_cac": u["ltv_cac"], "gm": u["gm"], "cm_pa": u["cm_pa"],
+                             "product_units": be["product_units"], "operating_units": be["operating_units"],
+                             "month_product": be_month(be["product_units"], p5["new_clients"], p5["churn"], p5["horizon"]),
+                             "month_operating": be_month(be["operating_units"], p5["new_clients"], p5["churn"], p5["horizon"])}
+        q = {**p5, "acq_spend": p5["acq_spend"] * k}
+        u = unit_economics(q)
+        be = breakeven(q)
+        out[("cac", s)] = {"value": u["cac"], "ltv": u["ltv"], "ltv_cac": u["ltv_cac"], "payback": u["payback"],
+                           "product_units": be["product_units"], "operating_units": be["operating_units"],
+                           "month_operating": be_month(be["operating_units"], q["new_clients"], q["churn"], q["horizon"])}
+    return base, bbe, out
+
+
+def fixed_opex_reconciliation(p5=P5):
+    sup = annual_support() / 12
+    chg = annual_change() / 12
+    t3 = tco()
+    readings = unit_variable_cost()[0]["Обробка і зберігання показів"] * P4["scale_y3"]
+    cloud_fixed = t3["cloud"]["years"][2]["op"] / 12 - readings
+    known = sup + chg + cloud_fixed
+    return {"support": sup, "change": chg, "cloud_fixed": cloud_fixed, "known": known, "other": p5["fixed_opex"] - known}
+
+
+LR5_ASSUMPTIONS = [
+    ("B1", "Обсяг верхнього рівня воронки", "70 кваліфікованих лідів на місяць (дзвінок з розрахунком економії відбувся)", "П: обов'язкове власне припущення; CPL 3 400 / 70 = 48,57 EUR", "воронка, CPL"),
+    ("B2", "Activation rate", "30% лідів запускають безкоштовний пілот 3 міс. на 1 будівлі", "П: обов'язкове власне припущення; поріг A10 ЛР № 1", "воронка"),
+    ("B3", "Частка змінних витрат поза COGS", "6% Revenue: платежі 1,5%, резерв боргів 1,0%, партнери 3,5%", "П: обов'язкове власне припущення", "contribution margin, BE"),
+    ("B4", "Утримання пілоту", "14 з 21 пілоту активні в 3-му місяці; відсів після першого місячного звіту", "П: 2/3 пілотів", "воронка, витрати пілотів"),
+    ("B5", "Склад acquisition spend", "пілоти 49 буд.-міс. × 16 = 784; події і демо 1 200; цифровий маркетинг 1 416 EUR", "П: розподіл суми варіанта", "CAC"),
+    ("B6", "Визначення клієнта", "активний: акаунт з оплаченим рахунком і хоча б 1 активною будівлею; новий: перший оплачений рахунок у місяці", "П: одна одиниця для CAC, ARPA, churn, BE", "усі метрики"),
+    ("B7", "Revenue churn", "клієнти, що пішли, мають середній ARPA; overage 1/12 епізодів A9 завершується щомісяця і стільки ж починається", "П: стаціонарний стан ЛР № 4", "gross і net revenue churn"),
+    ("B8", "Старт прогнозу", "M1 = вересень 2027: пілоти з червня 2027 після релізу 06.05.2027, перші оплати через 3 міс.; база на початку 0", "П", "місяць BE"),
+    ("B9", "Сталі параметри прогнозу", "ARPA, COGS на акаунт і mix базового місяця Y3 ЛР № 4; 7 нових і churn 3% щомісяця", "П: спрощення методички", "прогноз 12 міс."),
+    ("B10", "Acquisition spend регулярний", "3 400 EUR щомісяця незалежно від бази клієнтів", "Д: варіант; модель методички 3.3", "operating BE"),
 ]
