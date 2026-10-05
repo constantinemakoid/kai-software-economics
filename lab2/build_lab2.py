@@ -11,6 +11,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+from matplotlib.ticker import FuncFormatter
 import numpy as np
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font
@@ -32,6 +33,9 @@ ROW = {w.wid: FIRST + i for i, w in enumerate(m.WBS)}
 LAST = FIRST + len(m.WBS) - 1
 END_ROW = LAST + 2
 VEL_ROWS = [0, 0]
+
+
+UA_MONTHS = ["січ", "лют", "бер", "кві", "тра", "чер", "лип", "сер", "вер", "жов", "лис", "гру"]
 
 
 def iso(s):
@@ -602,7 +606,7 @@ def chart_gantt():
     sched, end = m.cpm()
     bl = m.baseline()
     order = [w for w in m.WBS]
-    fig, ax = plt.subplots(figsize=(10, 9.4), dpi=200)
+    fig, ax = plt.subplots(figsize=(10, 8.4), dpi=200)
     for i, w in enumerate(order):
         s = sched[w.wid]
         y = len(order) - 1 - i
@@ -614,9 +618,9 @@ def chart_gantt():
             lf = mdates.date2num(to_date_end(s["lf"])) + 1
             ax.plot([fin, lf], [y, y], color=MUTED, linewidth=1.2)
             ax.plot([lf], [y], marker="|", color=MUTED, markersize=8)
-    labels = [f"{w.wid} {textwrap.shorten(w.name.split(':')[0], 28, placeholder='...')}" for w in order][::-1]
+    labels = [f"{w.wid} {w.name.split(':')[0]}" for w in order][::-1]
     ax.set_yticks(range(len(order)))
-    ax.set_yticklabels(labels, fontsize=11)
+    ax.set_yticklabels(labels, fontsize=10)
     p50 = mdates.date2num(to_date_end(bl["p50"])) + 1
     blv = mdates.date2num(iso(bl["finish"]).date()) + 1
     mrv = mdates.date2num(iso(bl["finish_mr"]).date()) + 1
@@ -648,7 +652,7 @@ def chart_gantt():
     ax.set_ylim(-4.8, len(order) + 3.3)
     ax.xaxis_date()
     ax.xaxis.set_major_locator(mdates.MonthLocator())
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%m.%y"))
+    ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _: UA_MONTHS[mdates.num2date(v).month - 1] + "\n" + str(mdates.num2date(v).year)))
     k.axes(ax)
     ax.grid(axis="y", visible=False)
     from matplotlib.patches import Patch
@@ -657,7 +661,7 @@ def chart_gantt():
                Line2D([0], [0], color=MUTED, label="резерв часу пакета"), Line2D([0], [0], marker="D", color=COLORS[2], linestyle="", label="віха"),
                Patch(color=COLORS[3], label="contingency"), Patch(color=COLORS[4], label="management reserve"),
                Patch(color="#f4f3ee", label="спринти центрального прогнозу")]
-    ax.legend(handles=handles, loc="lower center", bbox_to_anchor=(0.4, -0.2), ncol=3, frameon=False, fontsize=11)
+    ax.legend(handles=handles, loc="upper center", bbox_to_anchor=(0.35, -0.09), ncol=3, frameon=False, fontsize=10.5)
     ax.set_title("Календарний план MVP (тривалості E, ранній старт)", color=INK)
     fig.tight_layout()
     fig.savefig(OUT / "fig_gantt.png")
@@ -728,14 +732,14 @@ def chart_mc():
     pp = m.p50_p80()
     bl = m.baseline()
     tot = mc["total"]
-    fig, (a1, a2) = plt.subplots(1, 2, figsize=(10, 4.8), dpi=200)
+    fig, (a1, a2) = plt.subplots(1, 2, figsize=(10, 6.0), dpi=200)
     a1.hist(tot, bins=50, color=COLORS[0], alpha=0.85)
     for v, c, lbl in ((pp["p50"], COLORS[1], "P50 аналітично"), (pp["p80"], COLORS[2], "P80 аналітично"), (mc["p80"], COLORS[3], "P80 Монте-Карло")):
         a1.axvline(v, color=c, linewidth=1.6, label=f"{lbl}: {v:.1f}".replace(".", ","))
     a1.set_xlabel("Тривалість проєкту, роб. днів")
     a1.set_ylabel("Кількість прогонів")
     a1.set_title("Розподіл тривалості, " + f"{mc['n']:,}".replace(",", " ") + " прогонів")
-    a1.legend(frameon=False, fontsize=10.5)
+    a1.legend(loc="upper center", bbox_to_anchor=(0.5, -0.17), frameon=False, fontsize=10.5)
     k.axes(a1)
     xs = np.sort(tot)
     ys = np.arange(1, len(xs) + 1) / len(xs)
@@ -749,7 +753,7 @@ def chart_mc():
     a2.set_xlabel("Тривалість проєкту, роб. днів")
     a2.set_ylabel("Імовірність завершити не пізніше")
     a2.set_title("S-крива")
-    a2.legend(frameon=False, fontsize=10.5, loc="lower right")
+    a2.legend(loc="upper center", bbox_to_anchor=(0.5, -0.17), frameon=False, fontsize=10.5)
     k.axes(a2)
     fig.tight_layout()
     fig.savefig(OUT / "fig_mc.png")
@@ -787,7 +791,7 @@ def chart_methods():
     a1.grid(axis="y", visible=False)
     effs = [("WBS (E)", sum(w.effort_e for w in m.WBS)), ("PF 17,6", m.ucp(m.UCP_PF * 0.8)["effort"]),
             ("PF 22", m.ucp()["effort"]), ("PF 26,4", m.ucp(m.UCP_PF * 1.2)["effort"])]
-    bars = a2.bar([e[0] for e in effs], [e[1] for e in effs], color=[COLORS[0], COLORS[2], COLORS[1], COLORS[3]], width=0.6)
+    bars = a2.bar([e[0] for e in effs], [e[1] for e in effs], color=[COLORS[0], COLORS[1], COLORS[2], COLORS[3]], width=0.6)
     for b in bars:
         a2.text(b.get_x() + b.get_width() / 2, b.get_height() + 40, f"{b.get_height():,.0f}".replace(",", " "), ha="center", fontsize=11, color=INK)
     a2.set_ylabel("Продуктивні люд.-год")
