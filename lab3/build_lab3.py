@@ -188,7 +188,7 @@ def sheet_calendar(wb):
         ws.cell(r, 2).number_format = "DD.MM.YYYY"
         ws.cell(r, 3).number_format = "DD.MM.YYYY"
     k.style_table(ws, first - 1, 1, last, 11)
-    col_widths(ws, [16, 12, 12, 11, 12, 12, 11, 13, 12, 12, 12])
+    col_widths(ws, [16, 12, 12, 11, 12, 12, 11, 14, 14, 12, 14])
     k.page(ws)
     LAYOUT["cal_first"] = first
 
@@ -233,7 +233,7 @@ def sheet_labor(wb):
     ws.cell(c0 + 2, 3).number_format = "#,##0"
     k.name(wb, "x_team_month", f"Labor!$C${c0 + 2}")
     k.style_table(ws, c0, 1, c0 + 2, 6, header=False)
-    col_widths(ws, [40, 11, 9, 13, 13, 10, 9, 13, 13, 10, 9, 11, 9])
+    col_widths(ws, [24, 13, 10, 14, 14, 11, 10, 14, 14, 12, 10, 12, 10])
     k.page(ws)
     LAYOUT["labor_total_row"] = t
     LAYOUT["phase_cost_row"] = c0
@@ -347,7 +347,7 @@ def sheet_cash(wb):
     for r in range(12, 16):
         ws.cell(r, 2).number_format = "#,##0.0"
     k.style_table(ws, 11, 1, 16, 2)
-    col_widths(ws, [42, 12] + [10] * 11 + [11])
+    col_widths(ws, [42, 15] + [10] * 11 + [11])
     k.page(ws)
 
 
@@ -395,7 +395,7 @@ def sheet_tco(wb):
     ws.cell(s0 + 4, 3, "=x_cloud_y1*B18")
     ws.cell(s0 + 4, 3).number_format = "#,##0"
     k.style_table(ws, s0, 1, s0 + 4, 6)
-    col_widths(ws, [32, 13, 13, 11, 14, 14, 14, 11, 11, 14])
+    col_widths(ws, [32, 14, 14, 15, 15, 15, 15, 11, 11, 15])
     k.page(ws)
 
 
@@ -499,7 +499,12 @@ def render_sheets(path):
         heads = {"rates": [1, 8], "labor": [1], "baseline": [1, LAYOUT["risk_row"], LAYOUT["bl_row"]], "cash": [1, 11],
                  "tco": [1, 14], "calendar": [1, LAYOUT["cal_first"] - 1]}[key]
         for r in heads:
-            ws.row_dimensions[r].height = 32
+            ws.row_dimensions[r].height = 34
+        wa = ws.column_dimensions["A"].width or 10
+        for r in range(1, ws.max_row + 1):
+            v = ws.cell(r, 1).value
+            if r not in heads and isinstance(v, str) and len(v) > wa * 1.05:
+                ws.row_dimensions[r].height = 28
         if key == "baseline":
             for r in range(1, ws.max_row + 1):
                 if ws.cell(r, 2).value and len(str(ws.cell(r, 2).value)) > 50:
@@ -602,9 +607,10 @@ def chart_cash():
         ax.bar(x, vals, bottom=bottom, color=COLORS[i], label=lbl, width=0.68)
         bottom += vals
     for j, v in enumerate(bottom):
-        ax.text(j, v + 1600, f"{v / 1000:.1f}".replace(".", ","), ha="center", fontsize=10, color=INK)
-    ax.plot(x, alt["total"], marker="D", linestyle="none", color=INK, markersize=5, label="альтернатива: разом за місяць")
-    ax.text(5, alt["total"][5] + 1500, f"start-up {eur(m.P3['alt_start'])}", ha="center", fontsize=10, color=INK)
+        top = max(v, alt["total"][j]) if j != 5 else v
+        ax.text(j, top + 1600, f"{v / 1000:.1f}".replace(".", ","), ha="center", fontsize=10, color=INK)
+    ax.plot(x + 0.22, alt["total"], marker="D", linestyle="none", color=INK, markersize=5, label="альтернатива: разом за місяць")
+    ax.text(5.22, alt["total"][5] + 1500, f"start-up {eur(m.P3['alt_start'])}", ha="center", fontsize=10, color=INK)
     rel = 6 + (1 - cb["release_frac"][6]) - 0.5
     ax.axvline(rel, color=MUTED, linestyle=":", linewidth=1.2)
     ax.text(rel + 0.1, 66000, "реліз 06.05.2027", fontsize=10.5, color=INK)
