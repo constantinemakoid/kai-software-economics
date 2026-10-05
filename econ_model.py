@@ -1131,3 +1131,214 @@ LR3_ASSUMPTIONS = [
     ("A14", "Retirement", "10 днів DevOps; для альтернативи ще 700 EUR на демонтаж і знищення дисків", "П", "в кінці Y3"),
     ("A15", "Інфляція і горизонт", "постійні ціни EUR, без індексації; 3 роки експлуатації після релізу", "П", "однаково для обох сценаріїв"),
 ]
+
+
+@dataclass(frozen=True)
+class Tier:
+    tid: str
+    name: str
+    target: str
+    base: float
+    per_building: float
+    client_hours: float
+    max_buildings: int
+    mix: float
+    usage: float
+    users: str
+    functions: str
+    response: str
+    high_buildings: int
+
+    @property
+    def client_cogs(self):
+        return self.client_hours * P["support_rate"]
+
+
+TIERS = [
+    Tier("B", "Basic", "власник 1...2 будівель без звітів орендарям; енергоменеджер або головний інженер",
+         25, 110, 0.10, 2, 0.60, 1.0, "до 3", "F1...F10", "наступний робочий день", 2),
+    Tier("S", "Standard", "власник або керуюча компанія 1...5 багатоорендних будівель класу B/B+",
+         50, 110, 0.20, 5, 0.30, 2.0, "до 10", "F1...F11", "8 робочих годин", 5),
+    Tier("P", "Pro", "керуюча компанія портфеля від 5 до 20 будівель",
+         150, 90, 0.50, 20, 0.10, 5.0, "без обмеження", "F1...F11", "4 робочі години", 20),
+]
+
+TIER = {t.tid: t for t in TIERS}
+
+P4 = {
+    "cogs_unit": 16.0,
+    "target_gm": 0.70,
+    "scale_y3": 85,
+    "sms_included": 20,
+    "sms_typical": 12,
+    "sms_high": 40,
+    "sms_price": 0.25,
+    "support_high_h": 0.60,
+    "unstable_fee": 50.0,
+    "high_share": 0.10,
+    "points_limit": 30,
+    "gain_share": 0.20,
+}
+
+SCENARIOS = [("Низький", 0.70), ("Базовий", 1.00), ("Високий", 1.40)]
+
+
+def cogs_building(high=False, p4=P4):
+    base = unit_variable_cost()[1]
+    if not high:
+        return base
+    extra_sms = (p4["sms_high"] - P["alerts_month"]) * P["alert_price"]
+    extra_support = (p4["support_high_h"] - P["support_hours"]) * P["support_rate"]
+    return base + extra_sms + extra_support
+
+
+def cogs_split():
+    parts, total = unit_variable_cost()
+    fixed = parts["Мобільний зв'язок шлюзу"] + parts["Підтримка"]
+    usage = total - fixed
+    return {"building_fixed": fixed, "usage": usage, "total": total, "fixed_share": fixed / total,
+            "per_point": parts["Обробка і зберігання показів"] / P["meters"]}
+
+
+def overage_high(p4=P4):
+    return p4["unstable_fee"] + max(p4["sms_high"] - p4["sms_included"], 0) * p4["sms_price"]
+
+
+def floor_price(cogs, gm=P4["target_gm"]):
+    return cogs / (1 - gm)
+
+
+def bill(t, n, high=0, rule=True, p4=P4):
+    rev = t.base + t.per_building * n
+    if rule:
+        rev += high * overage_high(p4)
+    return rev
+
+
+def client_cogs(t, n, high=0):
+    return t.client_cogs + (n - high) * cogs_building() + high * cogs_building(True)
+
+
+def tier_expected(t, p4=P4):
+    n = t.usage
+    rev = bill(t, n)
+    cogs = client_cogs(t, n)
+    return {"n": n, "revenue": rev, "cogs": cogs, "gp": rev - cogs, "gm": (rev - cogs) / rev,
+            "floor": floor_price(cogs, p4["target_gm"]), "markup": (rev - cogs) / cogs,
+            "per_building": rev / n, "value_share": rev / n / value_model()["total_eur_month"],
+            "client_share": t.client_cogs / cogs}
+
+
+def high_usage_check(t, p4=P4):
+    n = t.high_buildings
+    cogs = client_cogs(t, n, n)
+    out = {}
+    for rule in (False, True):
+        rev = bill(t, n, n, rule, p4)
+        out["rule" if rule else "norule"] = {"revenue": rev, "cogs": cogs, "gm": (rev - cogs) / rev}
+    out["n"] = n
+    return out
+
+
+def avg_usage(tiers=TIERS):
+    return sum(t.mix * t.usage for t in tiers)
+
+
+def scenario(k, p4=P4, tiers=TIERS, price_mult=1.0):
+    buildings = p4["scale_y3"] * k
+    clients = buildings / avg_usage(tiers)
+    rows = {}
+    base_rev = usage_rev = client_c = 0.0
+    for t in tiers:
+        c = clients * t.mix
+        b = c * t.usage
+        rows[t.tid] = {"clients": c, "buildings": b}
+        base_rev += c * t.base * price_mult
+        usage_rev += b * t.per_building * price_mult
+        client_c += c * t.client_cogs
+    high = buildings * p4["high_share"]
+    over_rev = high * overage_high(p4)
+    building_c = (buildings - high) * cogs_building() + high * cogs_building(True, p4)
+    rev = base_rev + usage_rev + over_rev
+    cogs = client_c + building_c
+    return {"k": k, "buildings": buildings, "clients": clients, "tiers": rows, "base_rev": base_rev,
+            "usage_rev": usage_rev, "over_rev": over_rev, "revenue": rev, "client_cogs": client_c,
+            "building_cogs": building_c, "cogs": cogs, "gp": rev - cogs, "gm": (rev - cogs) / rev,
+            "high": high, "arpa": rev / clients, "arpu_building": rev / buildings}
+
+
+def scenarios(p4=P4):
+    return [(name, scenario(k, p4)) for name, k in SCENARIOS]
+
+
+def with_tier(tid, **kw):
+    return [Tier(**{**t.__dict__, **kw}) if t.tid == tid else t for t in TIERS]
+
+
+def shift_mix(pro_share):
+    d = pro_share - TIER["P"].mix
+    return [Tier(**{**t.__dict__, "mix": t.mix - d if t.tid == "B" else (pro_share if t.tid == "P" else t.mix)}) for t in TIERS]
+
+
+def sensitivity4(delta=0.2):
+    base = scenario(1.0)
+    cases = [
+        ("Ціна: база і ціна будівлі", lambda s: scenario(1.0, price_mult=1 + s * delta)),
+        ("A1: частка Pro", lambda s: scenario(1.0, tiers=shift_mix(TIER["P"].mix * (1 + s * delta)))),
+        ("A2: будівель у клієнта Pro", lambda s: scenario(1.0, tiers=with_tier("P", usage=TIER["P"].usage * (1 + s * delta)))),
+        ("A3: частка high usage", lambda s: scenario(1.0, p4={**P4, "high_share": P4["high_share"] * (1 + s * delta)})),
+        ("A3: підтримка high usage", lambda s: scenario(1.0, p4={**P4, "support_high_h": P4["support_high_h"] * (1 + s * delta)})),
+    ]
+    rows = []
+    for label, f in cases:
+        lo, hi = f(-1), f(1)
+        rows.append({"label": label, "rev_lo": lo["revenue"], "rev_hi": hi["revenue"], "gm_lo": lo["gm"], "gm_hi": hi["gm"],
+                     "clients_lo": lo["clients"], "clients_hi": hi["clients"]})
+    return base, rows
+
+
+MODEL_CRITERIA = ["Передбачуваність доходу", "Захист від надмірного використання", "Простота продажу",
+                  "Відповідність цінності", "Вимірюваність metric у межах MVP"]
+
+MODELS = [
+    ("Hybrid base + usage (задана)", "клієнт (база) і активна будівля за місяць (usage)", (4, 4, 3, 4, 5),
+     "дохід росте разом з кількістю будівель, кожна будівля покриває свій COGS", "два компоненти рахунку треба пояснювати; ризик high usage у будівлі"),
+    ("Альтернатива 1: фіксована підписка на клієнта", "клієнт (акаунт) без ліміту будівель у тарифі", (5, 2, 5, 2, 5),
+     "найпростіший рахунок і прогноз доходу", "клієнт з 20 будівлями платить як клієнт з 5; маржа падає нижче 70%"),
+    ("Альтернатива 2: частка підтвердженої економії (gain-sharing)", "EUR підтвердженої економії енергії за IPMVP", (1, 2, 2, 5, 1),
+     "ціна прямо пропорційна вигоді клієнта", "потрібна погодна нормалізація поза MVP; дохід нестабільний, спори щодо бази"),
+]
+
+
+def model_scores():
+    return [(name, sum(sc) / len(sc)) for name, _, sc, _, _ in MODELS]
+
+
+def alt_models():
+    sc = scenario(1.0)
+    vm = value_model()
+    flat_rev = sum(tier_expected(t)["revenue"] * sc["tiers"][t.tid]["clients"] for t in TIERS)
+    pro = TIER["P"]
+    flat_pro = tier_expected(pro)["revenue"]
+    flat_cogs20 = client_cogs(pro, pro.high_buildings)
+    a1 = 0.02 * annual_kwh() * (P["days_as_is"] - P["days_to_be"]) / P["days_as_is"] * P["tariff"] / 12
+    gain_typ = P4["gain_share"] * vm["energy_eur"] / 12
+    gain_low = P4["gain_share"] * a1
+    return {"flat_rev": flat_rev, "flat_pro": flat_pro, "flat_cogs20": flat_cogs20, "flat_gm20": (flat_pro - flat_cogs20) / flat_pro,
+            "gain_typ": gain_typ, "gain_low": gain_low, "gain_rev": gain_typ * P4["scale_y3"], "gain_rev_low": gain_low * P4["scale_y3"],
+            "gain_gm_low": (gain_low - cogs_building()) / gain_low}
+
+
+def bill_curve(t, nmax=20):
+    return [(n, bill(t, n, rule=False)) for n in range(1, nmax + 1) if n <= t.max_buildings]
+
+
+LR4_ASSUMPTIONS = [
+    ("A1", "Розподіл клієнтів за тарифами", "Basic 60%, Standard 30%, Pro 10% клієнтів", "П: сегмент S1 ЛР № 1 складається переважно з власників однієї будівлі; керуючі компанії з портфелем є меншістю", "Revenue і COGS"),
+    ("A2", "Середнє usage", "будівель на клієнта: Basic 1,0; Standard 2,0; Pro 5,0 (у середньому 1,7); на будівлю до 30 точок обліку, 12 SMS, 0,16 год підтримки", "П: типова будівля і v = 16 EUR з ЛР № 1; межа 30 лічильників з ЛР № 2", "COGS і margin"),
+    ("A3", "Високе usage", "10% будівель у стані «нестабільний облік»: 0,6 год підтримки і 40 SMS на місяць; клієнт Pro з 20 будівлями", "П: поріг пропусків 10% з A5 ЛР № 1, ризик варіанта ЛР № 3", "ризик тарифу"),
+    ("A4", "COGS на одного клієнта (базова частина)", "Basic 0,10 год, Standard 0,20 год, Pro 0,50 год × 30 EUR = 3, 6, 15 EUR на місяць", "П: адміністрування акаунта, рахунок, ролі, для Pro пріоритетна підтримка і квартальний огляд", "COGS бази"),
+    ("A5", "Розрахунковий період і валюта", "календарний місяць, EUR, ціни без ПДВ", "Д: варіант задає COGS у EUR за місяць", "усі суми"),
+    ("A6", "Підключення будівлі", "шлюз і монтаж оплачуються разово за собівартістю, поза місячною моделлю", "П: обладнання не входить у v = 16 EUR ЛР № 1", "не входить у Revenue і COGS"),
+    ("A7", "Сценарії", "70%, 100%, 140% від 85 будівель; mix, usage і ціни сталі", "Д: методичка, розділ 3.2", "Revenue, COGS"),
+]
