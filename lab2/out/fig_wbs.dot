@@ -43,7 +43,7 @@ g5 [label="5 Якість, пілот і\nвипуск", fillcolor="#dce8f7", co
 root -> g5;
 p5_1 [label="5.1 Тест-стенд\nQA", fillcolor="white", color="#52514e", fontsize=14];
 g5 -> p5_1 [style=solid];
-p5_2 [label="5.2 Feature complete\nQA", fillcolor="white", color="#52514e", fontsize=14];
+p5_2 [label="5.2 Системне і\nнавантажувальне\nтестування\nQA", fillcolor="white", color="#52514e", fontsize=14];
 p5_1 -> p5_2 [style=invis];
 p5_3 [label="5.3 Стабілізація\nРозробник 1", fillcolor="white", color="#52514e", fontsize=14];
 p5_2 -> p5_3 [style=invis];

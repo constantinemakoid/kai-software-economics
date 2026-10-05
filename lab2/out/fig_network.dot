@@ -17,7 +17,7 @@ n4_2 [label="4.2 F9 Дашборд будівлі\nE 15,7 | ES 82,5 | EF 98,2\n�
 n4_3 [label="4.3 F10 Імпорт рахунку і\nзвірка з вводом\nE 7,3 | ES 70,3 | EF 77,7\nрезерв 9,0", fillcolor="#dce8f7", color="#2a78d6"];
 n4_4 [label="4.4 F11 Звіт орендарю і\nролі доступу\nE 11,5 | ES 77,7 | EF 89,2\nрезерв 9,0", fillcolor="#dce8f7", color="#2a78d6"];
 n5_1 [label="5.1 Тест-стенд\nE 22,5 | ES 13,3 | EF 35,8\nрезерв 25,5", fillcolor="#dce8f7", color="#2a78d6"];
-n5_2 [label="5.2 Feature complete\nE 10,7 | ES 98,2 | EF 108,8\nрезерв 0,0", fillcolor="#fbe1d6", color="#eb6834", penwidth=2.2];
+n5_2 [label="5.2 Системне і\nнавантажувальне\nтестування\nE 10,7 | ES 98,2 | EF 108,8\nрезерв 0,0", fillcolor="#fbe1d6", color="#eb6834", penwidth=2.2];
 n5_3 [label="5.3 Стабілізація\nE 11,2 | ES 108,8 | EF 120,0\nрезерв 0,0", fillcolor="#fbe1d6", color="#eb6834", penwidth=2.2];
 n5_4 [label="5.4 Пілот\nE 26,3 | ES 70,3 | EF 96,7\nрезерв 12,8", fillcolor="#dce8f7", color="#2a78d6"];
 n5_5 [label="5.5 Пілотна валідація на\nреальних даних\nE 10,5 | ES 108,8 | EF 119,3\nрезерв 0,7", fillcolor="#dce8f7", color="#2a78d6"];

@@ -221,7 +221,7 @@ def sheet_pert(wb):
     k.name(wb, "bl_p50", f"'PERT і резерв'!$B${b + 4}")
     k.name(wb, "bl_p80", f"'PERT і резерв'!$B${b + 5}")
     k.style_table(ws, b, 1, b + len(rows), 4)
-    col_widths(ws, [30, 40, 9, 22, 7, 7, 7, 7, 10, 60])
+    col_widths(ws, [30, 40, 9, 22, 7, 7, 7, 7, 13, 60])
     k.page(ws)
     return b
 
