@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from openpyxl import Workbook, load_workbook
 from openpyxl.chart import BarChart, Reference
+from openpyxl.styles import Alignment
 from openpyxl.utils import get_column_letter
 
 ROOT = Path(__file__).resolve().parent
@@ -93,6 +94,7 @@ def sheet_params(wb):
         k.name(wb, key, f"'Параметри ЛР4'!$C${n + 2 + j}")
         ws.cell(n + 2 + j, 3).number_format = "0.00"
     k.style_table(ws, 1, 1, n + 5, 6)
+    ws.cell(n + 2, 6).alignment = Alignment(horizontal="left", vertical="center")
     col_widths(ws, [14, 36, 11, 14, 6, 40])
     k.page(ws, landscape=False)
     LAYOUT["params_extra"] = n + 2
@@ -260,6 +262,7 @@ def sheet_scenarios(wb):
     ch.grouping = "clustered"
     ch.title = "Revenue, COGS і gross profit за місяць, EUR"
     ch.y_axis.title = "EUR за місяць"
+    ch.y_axis.number_format = "#,##0"
     for r, color in ((13, "2a78d6"), (16, "eb6834"), (17, "1baf7a")):
         ref = Reference(ws, min_col=1, max_col=4, min_row=r, max_row=r)
         ch.add_data(ref, titles_from_data=True, from_rows=True)
