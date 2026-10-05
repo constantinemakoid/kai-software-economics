@@ -1,3 +1,4 @@
+import json
 import shutil
 import sys
 import tempfile
@@ -72,7 +73,7 @@ def sheet_params(wb):
         ("x5_churn", "Monthly logo churn", P5["churn"], "частка", "Д", "варіант 14, ЛР № 5"),
         ("x5_fixed", "Fixed product OPEX за місяць", P5["fixed_opex"], "EUR/міс.", "Д", "варіант 14, ЛР № 5"),
         ("x5_scale", "Масштаб Y3, будівель", P4_SCALE, "будівель/міс.", "Д", "варіант 14, ЛР № 4 і № 5"),
-        ("x5_rev", "Revenue базового місяця Y3", s["revenue"], "EUR/міс.", "Д", "ЛР № 4, сценарій 100%"),
+        ("x5_rev", "Revenue базового місяця Y3", "=x5_rev_bu+x5_over", "EUR/міс.", "Р", "ЛР № 4, сценарій 100%: сума двох рядків нижче"),
         ("x5_rev_bu", "з неї база і будівлі (без overage)", s["base_rev"] + s["usage_rev"], "EUR/міс.", "Д", "ЛР № 4: 2 250 + 8 850"),
         ("x5_over", "з неї overage", s["over_rev"], "EUR/міс.", "Д", "ЛР № 4: 8,5 буд. × 55"),
         ("x5_cogs", "COGS базового місяця Y3", s["cogs"], "EUR/міс.", "Д", "ЛР № 4, з урахуванням A3"),
@@ -214,7 +215,8 @@ BE_ROWS = [
     ("x5_be_o_rev", "Operating break-even revenue", "(fixed OPEX + spend) / CM ratio", "=(x5_be_fixed+x5_be_acq)/x5_cmr", "#,##0.00"),
     ("x5_be_p_b", "Product break-even, будівель", "units × 1,7", "=x5_be_p*x5_usage", "0.00"),
     ("x5_be_o_b", "Operating break-even, будівель", "units × 1,7", "=x5_be_o*x5_usage", "0.00"),
-    ("x5_be_mos", "Запас Y3 ЛР № 4 над product BE", "(50 − BE) / 50", "=(x5_clients-x5_be_p)/x5_clients", "0.00%"),
+    ("x5_be_mos", "Запас безпеки Y3 ЛР № 4 над product BE", "(клієнти Y3 − BE) / клієнти Y3", "=(x5_clients-x5_be_p)/x5_clients", "0.00%"),
+    ("x5_be_mos_o", "Запас безпеки M12 над operating BE", "(клієнти M12 − BE) / клієнти M12", "=('Прогноз 12 міс.'!$F$13-x5_be_o)/'Прогноз 12 міс.'!$F$13", "0.00%"),
     ("x5_be_steady", "Стаціонарна база клієнтів", "нові / churn", "=x5_new/x5_churn", "0.00"),
 ]
 
@@ -416,7 +418,8 @@ def verify(path):
         checks[key] = (ue[f"D{LAYOUT['ue_' + key]}"].value, val)
     for key, val in (("x5_be_p", b["product_units"]), ("x5_be_o", b["operating_units"]), ("x5_be_p_rev", b["product_revenue"]),
                      ("x5_be_o_rev", b["operating_revenue"]), ("x5_be_p_int", b["product_units_int"]),
-                     ("x5_be_o_int", b["operating_units_int"]), ("x5_be_steady", f["steady"])):
+                     ("x5_be_o_int", b["operating_units_int"]), ("x5_be_steady", f["steady"]),
+                     ("x5_be_mos", b["mos_product_y3"]), ("x5_be_mos_o", f["mos_operating_m12"])):
         checks[key] = (be[f"D{LAYOUT['be_' + key]}"].value, val)
     for i, row in enumerate(f["rows"], start=2):
         checks[f"fc_cust_{i - 1}"] = (fc[f"F{i}"].value, row["customers"])
@@ -454,6 +457,7 @@ def verify(path):
     print("checks:", len(checks) + len(texts))
     LAYOUT["n_checks"] = len(checks) + len(texts)
     LAYOUT["n_text"] = len(texts)
+    (OUT / "verify.json").write_text(json.dumps({"checks": len(checks) + len(texts), "numeric": len(checks), "text": len(texts), "ok": ok}))
     shutil.copy(tmp / path.name, OUT / "lab5_recalculated.xlsx")
     shutil.rmtree(tmp, ignore_errors=True)
     return ok
@@ -632,10 +636,10 @@ def chart_sens():
     a2.bar(x - w / 2, pu, width=w, color=COLORS[0], label="product BE units")
     a2.bar(x + w / 2, ou, width=w, color=COLORS[1], label="operating BE units")
     for j in range(3):
-        a2.text(x[j] - w / 2, pu[j] + 1.5, eur(pu[j], 1), ha="center", fontsize=10, color=INK)
-        a2.text(x[j] + w / 2, ou[j] + 1.5, eur(ou[j], 1), ha="center", fontsize=10, color=INK)
+        a2.text(x[j] - w / 2, pu[j] - 2, eur(pu[j], 1), ha="center", va="top", fontsize=10, color="white", fontweight="bold", zorder=4)
+        a2.text(x[j] + w / 2, ou[j] - 2, eur(ou[j], 1), ha="center", va="top", fontsize=10, color="white", fontweight="bold", zorder=4)
     m12 = m.forecast()["rows"][-1]["customers"]
-    a2.axhline(m12, color=COLORS[2], linewidth=1.8, label=f"клієнти M12 {eur(m12, 1)}")
+    a2.axhline(m12, color=COLORS[2], linewidth=1.8, label=f"клієнти M12 {eur(m12, 1)}", zorder=3)
     a2.set_xticks(x)
     a2.set_xticklabels([f"ціна −20%\nARPA {eur(s[('price', -1)]['value'], 2)}", f"база\nARPA {eur(s[('price', 0)]['value'], 2)}",
                         f"ціна +20%\nARPA {eur(s[('price', 1)]['value'], 2)}"], fontsize=10)

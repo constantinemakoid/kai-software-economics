@@ -1476,6 +1476,10 @@ def revenue_churn(p5=P5):
             "expansion": expansion, "gross": gross, "net": net, "ltv_rev": u["gp_pa"] / gross}
 
 
+def safety_margin(actual, be_units):
+    return (actual - be_units) / actual
+
+
 def breakeven(p5=P5, price_mult=1.0):
     u = unit_economics(p5, price_mult)
     fixed = p5["fixed_opex"]
@@ -1485,7 +1489,8 @@ def breakeven(p5=P5, price_mult=1.0):
     return {"cm_pa": u["cm_pa"], "cm_ratio": u["cm_ratio"], "fixed": fixed, "acq": acq, "product_units": prod,
             "operating_units": oper, "product_units_int": math.ceil(prod - 1e-9), "operating_units_int": math.ceil(oper - 1e-9),
             "product_revenue": fixed / u["cm_ratio"], "operating_revenue": (fixed + acq) / u["cm_ratio"],
-            "product_buildings": prod * avg_usage(), "operating_buildings": oper * avg_usage()}
+            "product_buildings": prod * avg_usage(), "operating_buildings": oper * avg_usage(),
+            "mos_product_y3": safety_margin(u["clients"], prod), "mos_operating_y3": safety_margin(u["clients"], oper)}
 
 
 def month_label(i, p5=P5):
@@ -1520,7 +1525,9 @@ def forecast(p5=P5, price_mult=1.0):
     presale = p5["presale_months"] * (p5["fixed_opex"] + p5["acq_spend"])
     return {"rows": rows, "first_product": first_prod, "first_operating": first_oper, "be": be,
             "steady": p5["new_clients"] / p5["churn"], "cum_operating": cum, "presale_loss": presale,
-            "investment": mvp_budget()["baseline"]}
+            "investment": mvp_budget()["baseline"],
+            "mos_product_m12": safety_margin(rows[-1]["customers"], be["product_units"]),
+            "mos_operating_m12": safety_margin(rows[-1]["customers"], be["operating_units"])}
 
 
 def be_month(units, new, churn, horizon=12):
