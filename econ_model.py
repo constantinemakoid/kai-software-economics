@@ -849,3 +849,285 @@ def sp_phase_totals():
     vf = velocity_forecast()
     return {"pre": pre, "post": post, "fc": fc,
             **{k: (pre + vf[k]["weeks"] * DAYS_WEEK + post) for k in ("fast", "central", "slow")}}
+
+
+RATE_SET = "B"
+LR3_ROLES = [("BA", "BA/PM"), ("UX", "UX"), ("DEV", "Developer"), ("QA", "QA"), ("OPS", "DevOps")]
+LR2_FTE = {"BA": 0.5, "UX": 0.0, "DEV": 2.0, "QA": 0.75, "OPS": 0.5}
+PHASE_NAMES = [("A", "Аналіз"), ("D", "Проєктування"), ("B", "Розроблення"), ("T", "Тестування і реліз")]
+PHASE_FTE = {
+    "BA": (0.5, 0.25, 0.5, 0.5),
+    "UX": (0.0, 0.0, 0.0, 0.0),
+    "DEV": (2.0, 2.0, 2.0, 2.0),
+    "QA": (0.25, 0.5, 0.75, 0.75),
+    "OPS": (0.25, 0.5, 0.5, 0.5),
+}
+OVERHEAD_PARTS = [
+    ("Робоче місце в коворкінгу", 250),
+    ("Амортизація ноутбука і периферії", 100),
+    ("Бухгалтерія, HR, юридичний супровід", 200),
+    ("Офісне ПЗ, пошта, зв'язок", 100),
+]
+BENEFIT_PARTS = [
+    ("Медичне страхування", 50),
+    ("Навчання і конференції", 30),
+]
+EQUIPMENT = [
+    ("Прототип шлюзу: мінікомп'ютер, адаптер RS-485, LTE модем, 3 лічильники", 1, 1200),
+    ("Тест-стенд: 6 типів лічильників, імітатор обривів", 2, 2000),
+    ("Шлюз і монтажні матеріали пілотної будівлі", 4, 800),
+]
+LICENSES = [
+    ("Інструменти розробки, репозиторій, трекер задач і CI на 5 осіб", 1, 2500),
+    ("ПЗ тест-стенда: аналізатор і симулятор Modbus", 2, 1500),
+    ("Бібліотека графіків дашборда, комерційна ліцензія", 4, 1000),
+    ("Навантажувальне і безпекове тестування: хмарний сервіс k6 і сканер вразливостей", 6, 2000),
+]
+DEV_CLOUD = [200, 400, 600, 600, 800, 1000, 400]
+ALT_START_PARTS = [
+    ("Два сервери (active, standby) з дисками NVMe", 18000),
+    ("Мережеве обладнання, міжмережевий екран, KVM", 4000),
+    ("Встановлення, налаштування кластера БД і брокера, hardening", 8000),
+    ("Міграція stage і prod з хмари, приймальні тести NFR2 і NFR3", 4000),
+    ("Підключення колокації і резервного майданчика", 2000),
+]
+ALT_OP_PARTS = [
+    ("Колокація 2 серверів з живленням і каналом, 2 × 200 EUR × 12", 4800),
+    ("Позамайданчикове сховище резервних копій", 1200),
+    ("Розширена гарантія обладнання", 1680),
+    ("Адміністрування серверів, 0,1 FTE DevOps × 6 100 × 12", 7320),
+]
+
+P3 = {
+    "rate_BA": 4600, "rate_UX": 4300, "rate_DEV": 5700, "rate_QA": 4200, "rate_OPS": 6100,
+    "esv": 0.22, "min_wage_uah": 8647, "esv_cap_mult": 20, "fx": 48.0,
+    "overhead": sum(v for _, v in OVERHEAD_PARTS), "benefits": sum(v for _, v in BENEFIT_PARTS),
+    "days_month_avg": 21.75,
+    "r1_p": 0.40, "r1_impact": 16000, "r1_month": 5,
+    "r2_p": 0.25, "r2_days": 10, "r2_turnover": 0.25,
+    "cloud_y1": 12000, "growth_y2": 0.20, "growth_y3": 0.10,
+    "alt_start": 36000, "alt_op": 15000, "alt_start_month": 6,
+    "support_OPS": 0.25, "support_BA": 0.25, "change_DEV": 0.5, "change_QA": 0.25,
+    "cloud_risk_p": 0.30, "cloud_risk_share": 0.20,
+    "alt_risk_p": 0.10, "alt_risk_hw": 5000, "alt_risk_days": 10,
+    "retire_days": 10, "alt_retire_extra": 700,
+    "discount": 0.10,
+}
+
+LR3_MONTHS = 12
+
+
+def esv_cap_eur(p=P3):
+    return p["min_wage_uah"] * p["esv_cap_mult"] / p["fx"]
+
+
+def rate_parts(rid, p=P3):
+    rate = p["rate_" + rid]
+    cap = esv_cap_eur(p)
+    rest = rate - p["overhead"] - p["benefits"]
+    gross = rest / (1 + p["esv"]) if rest / (1 + p["esv"]) <= cap else rest - p["esv"] * cap
+    esv = p["esv"] * min(gross, cap)
+    return {"gross": gross, "esv": esv, "benefits": p["benefits"], "overhead": p["overhead"], "total": gross + esv + p["benefits"] + p["overhead"], "rate": rate}
+
+
+def phase_bounds():
+    sched, _ = cpm()
+    fc = dict(milestones())["Feature complete"]
+    days = baseline()["days"]
+    edges = [0.0, sched["1.1"]["ef"], sched["1.2"]["ef"], fc, float(days)]
+    return [(k, n, edges[i], edges[i + 1]) for i, (k, n) in enumerate(PHASE_NAMES)]
+
+
+def month_calendar(n=LR3_MONTHS):
+    import numpy as np
+    start = np.datetime64(PROJECT_START, "M")
+    rows = []
+    cum = 0
+    for i in range(n):
+        m0 = (start + i).astype("datetime64[D]")
+        m1 = (start + i + 1).astype("datetime64[D]")
+        a = max(m0, np.datetime64(PROJECT_START))
+        wd = int(np.busday_count(a, m1, holidays=HOLIDAYS))
+        full = int(np.busday_count(m0, m1, holidays=HOLIDAYS))
+        rows.append({"m": i + 1, "start": str(m0), "end": str(m1 - 1), "wd": wd, "full_wd": full, "c0": cum, "c1": cum + wd})
+        cum += wd
+    return rows
+
+
+def labor_plan(p=P3):
+    cal = month_calendar()
+    phases = phase_bounds()
+    frac = {}
+    for row in cal:
+        for k, _, a, b in phases:
+            ov = max(0.0, min(b, row["c1"]) - max(a, row["c0"]))
+            frac[(row["m"], k)] = ov / row["wd"] if row["wd"] else 0.0
+    months = {k: sum(frac[(row["m"], k)] for row in cal) for k, _, _, _ in phases}
+    roles = {}
+    for rid, _ in LR3_ROLES:
+        ftem = [PHASE_FTE[rid][i] * months[k] for i, (k, _, _, _) in enumerate(phases)]
+        roles[rid] = {"ftem": ftem, "ftem_total": sum(ftem), "cost": sum(ftem) * p["rate_" + rid],
+                      "phase_cost": [x * p["rate_" + rid] for x in ftem]}
+    monthly = []
+    for row in cal:
+        monthly.append(sum(p["rate_" + rid] * PHASE_FTE[rid][i] * frac[(row["m"], k)]
+                           for rid, _ in LR3_ROLES for i, (k, _, _, _) in enumerate(phases)))
+    total = sum(r["cost"] for r in roles.values())
+    return {"phases": phases, "months": months, "frac": frac, "roles": roles, "monthly": monthly, "total": total, "calendar": cal}
+
+
+def team_month_cost(p=P3):
+    return sum(p["rate_" + rid] * LR2_FTE[rid] for rid, _ in LR3_ROLES)
+
+
+def risks(p=P3):
+    tm = team_month_cost(p)
+    r1_team = tm * MR_DAYS / p["days_month_avg"]
+    r2_impact = p["rate_DEV"] + tm * p["r2_days"] / p["days_month_avg"]
+    lr = labor_plan(p)
+    dev_months = sum(lr["months"].values())
+    r2_p_calc = 1 - (1 - p["r2_turnover"]) ** (2 * dev_months / 12)
+    return [
+        {"rid": "R1", "name": "Нестабільні лічильники: системний сценарій A5", "p": p["r1_p"], "impact": p["r1_impact"],
+         "emv": p["r1_p"] * p["r1_impact"], "month": p["r1_month"], "team_part": r1_team, "hw_part": p["r1_impact"] - r1_team},
+        {"rid": "R2", "name": "Вибуття розробника під час MVP", "p": p["r2_p"], "impact": r2_impact,
+         "emv": p["r2_p"] * r2_impact, "month": None, "p_calc": r2_p_calc},
+    ]
+
+
+def mvp_budget(p=P3):
+    lr = labor_plan(p)
+    eq = sum(v for _, _, v in EQUIPMENT)
+    lic = sum(v for _, _, v in LICENSES)
+    cl = sum(DEV_CLOUD)
+    rk = risks(p)
+    cont = sum(r["emv"] for r in rk)
+    base = lr["total"] + eq + lic + cl
+    mr = rk[0]["impact"] - rk[0]["emv"]
+    return {"labor": lr["total"], "equipment": eq, "licenses": lic, "dev_cloud": cl, "base": base,
+            "contingency": cont, "baseline": base + cont, "mr": mr, "budget": base + cont + mr, "risks": rk}
+
+
+def release_fraction():
+    cal = month_calendar()
+    days = baseline()["days"]
+    out = []
+    for row in cal:
+        if row["c1"] <= days:
+            out.append(0.0)
+        elif row["c0"] >= days:
+            out.append(1.0)
+        else:
+            out.append((row["c1"] - days) / row["wd"])
+    return out
+
+
+def annual_support(p=P3):
+    return 12 * (p["support_OPS"] * p["rate_OPS"] + p["support_BA"] * p["rate_BA"])
+
+
+def annual_change(p=P3):
+    return 12 * (p["change_DEV"] * p["rate_DEV"] + p["change_QA"] * p["rate_QA"])
+
+
+def cash_burn(p=P3, scenario="cloud"):
+    lr = labor_plan(p)
+    rel = release_fraction()
+    rk = risks(p)
+    support_m = (annual_support(p) + annual_change(p)) / 12
+    rows = {"labor": [], "eq_lic": [], "cloud_op": [], "post": [], "reserve": [], "alt_start": []}
+    for i in range(LR3_MONTHS):
+        m = i + 1
+        rows["labor"].append(lr["monthly"][i])
+        rows["eq_lic"].append(sum(v for _, mm, v in EQUIPMENT + LICENSES if mm == m))
+        dev_cl = DEV_CLOUD[i] if i < len(DEV_CLOUD) else 0.0
+        op = p["cloud_y1"] / 12 if scenario == "cloud" else p["alt_op"] / 12
+        rows["cloud_op"].append(dev_cl + op * rel[i])
+        rows["post"].append(support_m * rel[i])
+        rows["reserve"].append(sum(r["emv"] for r in rk if r["month"] == m))
+        rows["alt_start"].append(p["alt_start"] if scenario == "alt" and m == p["alt_start_month"] else 0.0)
+    total = [sum(rows[k][i] for k in rows) for i in range(LR3_MONTHS)]
+    used = sum(rows["reserve"])
+    return {**rows, "total": total, "sum": sum(total), "reserve_left": sum(r["emv"] for r in rk) - used, "release_frac": rel}
+
+
+def tco(p=P3):
+    b = mvp_budget(p)
+    sup = annual_support(p)
+    chg = annual_change(p)
+    cloud_op = [p["cloud_y1"], p["cloud_y1"] * (1 + p["growth_y2"]), p["cloud_y1"] * (1 + p["growth_y2"]) * (1 + p["growth_y3"])]
+    alt_op = [p["alt_op"]] * 3
+    day_ops = p["rate_OPS"] / p["days_month_avg"]
+    cloud_risk = [p["cloud_risk_p"] * p["cloud_risk_share"] * x for x in cloud_op]
+    alt_risk = [p["alt_risk_p"] * (p["alt_risk_hw"] + p["alt_risk_days"] * day_ops)] * 3
+    ret_cloud = p["retire_days"] * day_ops
+    ret_alt = ret_cloud + p["alt_retire_extra"]
+    out = {}
+    for key, op, rk, start, ret in (("cloud", cloud_op, cloud_risk, 0.0, ret_cloud), ("alt", alt_op, alt_risk, p["alt_start"], ret_alt)):
+        years = []
+        for y in range(3):
+            row = {"mvp": (b["baseline"] + start) if y == 0 else 0.0, "op": op[y], "support": sup, "change": chg, "risk": rk[y],
+                   "retire": ret if y == 2 else 0.0}
+            row["total"] = sum(row.values())
+            years.append(row)
+        total = sum(r["total"] for r in years)
+        pv = sum(r["total"] / (1 + p["discount"]) ** y for y, r in enumerate(years))
+        out[key] = {"years": years, "tco3": total, "pv": pv, "start": start, "retire": ret,
+                    "op_sum": sum(op), "risk_sum": sum(rk)}
+    out["diff"] = out["alt"]["tco3"] - out["cloud"]["tco3"]
+    out["baseline"] = b["baseline"]
+    return out
+
+
+def breakeven_cloud_multiplier(p=P3):
+    lo, hi = 0.0, 10.0
+    for _ in range(100):
+        mid = (lo + hi) / 2
+        t = tco({**p, "cloud_y1": p["cloud_y1"] * mid})
+        if t["diff"] > 0:
+            lo = mid
+        else:
+            hi = mid
+    return (lo + hi) / 2
+
+
+SENS_KEYS = [
+    ("rate_DEV", "Loaded rate Developer"),
+    ("change_DEV", "FTE Developer у change"),
+    ("cloud_y1", "Cloud Y1"),
+    ("alt_start", "Alternative start"),
+    ("alt_op", "Alternative op"),
+    ("r1_impact", "Вплив ризику R1"),
+]
+
+
+def sensitivity(delta=0.2, p=P3):
+    base = tco(p)
+    rows = []
+    for key, label in SENS_KEYS:
+        lo = tco({**p, key: p[key] * (1 - delta)})
+        hi = tco({**p, key: p[key] * (1 + delta)})
+        rows.append({"key": key, "label": label,
+                     "cloud_lo": lo["cloud"]["tco3"], "cloud_hi": hi["cloud"]["tco3"],
+                     "alt_lo": lo["alt"]["tco3"], "alt_hi": hi["alt"]["tco3"],
+                     "diff_lo": lo["diff"], "diff_hi": hi["diff"]})
+    return base, rows
+
+
+LR3_ASSUMPTIONS = [
+    ("A1", "Ставки ролей", "набір B: BA/PM 4 600, UX 4 300, Developer 5 700, QA 4 200, DevOps 6 100 EUR/міс.", "Д", "рядок варіанта 14, набір B"),
+    ("A2", "Склад loaded rate", "оклад + ЄСВ 22% (база не більше 20 мінімальних зарплат) + бенефіти 80 + накладні 650 EUR/міс. на FTE", "П", "штатна модель; накладні включають робоче місце, ноутбук, бухгалтерію, офісне ПЗ"),
+    ("A3", "Курс для бази ЄСВ", "48 UAH за 1 EUR", "П", "лише для межі бази ЄСВ; модель у EUR"),
+    ("A4", "Тривалість MVP", "132 роб. дні (baseline ЛР № 2), 02.11.2026...06.05.2027", "Д", "ЛР № 2, P80 з contingency"),
+    ("A5", "Межі фаз", "аналіз 0...8,33; проєктування 8,33...21,67; розроблення 21,67...98,17; тестування і реліз 98,17...132 роб. дня", "Р", "EF пакетів 1.1, 1.2, віха Feature complete, baseline"),
+    ("A6", "FTE ролей за фазами", "розробники 2,0 у всіх фазах; BA/PM, QA, DevOps від 0,25 до 0,75 за піковим тижневим навантаженням WBS", "П", "округлення вгору до 0,25, не більше FTE ЛР № 2"),
+    ("A7", "Прямі витрати MVP", "обладнання 4 000, ліцензії 7 000, cloud розроблення 4 000 EUR", "Д", "рядок варіанта 14, розподіл за статтями П"),
+    ("A8", "Ризик R1", "40% × 16 000 EUR, нестабільні лічильники", "Д", "рядок варіанта 14"),
+    ("A9", "Ризик R2", "25% × (5 700 + 19 900 × 10 / 21,75) EUR, вибуття розробника", "П", "річна плинність 25%, 2 розробники, 6,19 міс."),
+    ("A10", "Cloud production", "Y1 12 000 EUR; Y2 +20%; Y3 +10%", "Д", "рядок варіанта 14; growth моделює зростання використання"),
+    ("A11", "Альтернатива", "fixed hosting у колокації: start 36 000 EUR, op 15 000 EUR на рік", "Д", "рядок варіанта 14, розподіл за статтями П"),
+    ("A12", "Support і change після релізу", "support 0,25 DevOps + 0,25 BA/PM; change 0,5 Developer + 0,25 QA", "П", "однаково для обох сценаріїв"),
+    ("A13", "Пострелізні ризики", "cloud 30% × 20% річного cloud; альтернатива 10% × (5 000 + 10 днів DevOps)", "П", "різні механізми ризику сценаріїв"),
+    ("A14", "Retirement", "10 днів DevOps; для альтернативи ще 700 EUR на демонтаж і знищення дисків", "П", "в кінці Y3"),
+    ("A15", "Інфляція і горизонт", "постійні ціни EUR, без індексації; 3 роки експлуатації після релізу", "П", "однаково для обох сценаріїв"),
+]
